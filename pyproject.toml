@@ -1,0 +1,19 @@
+[project]
+name = "ims-control-2026-simple"
+version = "0.1.0"
+description = "Control software for a drift-tube ion mobility spectrometer using an NI USB-6351 DAQ."
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6",
+    "pyqtgraph>=0.13",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "h5py>=3.10",
+    "nidaqmx>=0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

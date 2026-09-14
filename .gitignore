@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.h5
+*.csv
+*.mzml
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.vscode/
