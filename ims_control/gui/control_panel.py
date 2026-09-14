@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QLineEdit,
     QProgressBar,
     QPushButton,
     QSpinBox,
@@ -18,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ims_control.acquisition.experiment import ExperimentConfig
+from ims_control.acquisition.experiment import ExperimentConfig, SystemParameters
 
 
 class ControlPanel(QWidget):
@@ -27,9 +26,15 @@ class ControlPanel(QWidget):
     start_requested = Signal(ExperimentConfig, bool)  # (config, use_simulator)
     stop_requested = Signal()
     pause_toggled = Signal(bool)
+    system_parameters_requested = Signal()
+    power_kv_changed = Signal(float, float)  # (ims_cell_kv, ionization_kv)
+    power_toggle_requested = Signal(bool)  # requested enabled state
+    save_defaults_requested = Signal()
+    metadata_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._system_parameters = SystemParameters()
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -66,19 +71,38 @@ class ControlPanel(QWidget):
         timing_form.addRow("Total iterations", self.iterations_spin)
         layout.addWidget(timing_box)
 
-        daq_box = QGroupBox("DAQ Configuration")
+        daq_box = QGroupBox("Acquisition Mode")
         daq_form = QFormLayout(daq_box)
         self.simulator_checkbox = QCheckBox("Use simulated DAQ (no hardware)")
         self.simulator_checkbox.setChecked(True)
         daq_form.addRow(self.simulator_checkbox)
-
-        self.device_name_edit = QLineEdit("Dev1")
-        daq_form.addRow("Device name", self.device_name_edit)
-        self.ai_channel_edit = QLineEdit("ai0")
-        daq_form.addRow("AI channel (detector)", self.ai_channel_edit)
-        self.co_channel_edit = QLineEdit("ctr0")
-        daq_form.addRow("CO channel (gate pulse)", self.co_channel_edit)
+        self.system_parameters_button = QPushButton("System Parameters...")
+        daq_form.addRow(self.system_parameters_button)
+        self.save_defaults_button = QPushButton("Save Current as Defaults")
+        daq_form.addRow(self.save_defaults_button)
         layout.addWidget(daq_box)
+
+        power_box = QGroupBox("Power Supplies")
+        power_form = QFormLayout(power_box)
+        self.power_simulator_checkbox = QCheckBox("Use simulated power supplies (no hardware)")
+        self.power_simulator_checkbox.setChecked(True)
+        power_form.addRow(self.power_simulator_checkbox)
+
+        self.ims_cell_kv_spin = QDoubleSpinBox()
+        self.ims_cell_kv_spin.setRange(0.0, self._system_parameters.ims_cell_max_kv)
+        self.ims_cell_kv_spin.setSuffix(" kV")
+        power_form.addRow("IMS cell", self.ims_cell_kv_spin)
+
+        self.ionization_kv_spin = QDoubleSpinBox()
+        self.ionization_kv_spin.setRange(0.0, self._system_parameters.ionization_max_kv)
+        self.ionization_kv_spin.setSuffix(" kV bias")
+        power_form.addRow("Ionization", self.ionization_kv_spin)
+
+        self.power_toggle_button = QPushButton("Power OFF")
+        self.power_toggle_button.setCheckable(True)
+        self._style_power_button(False)
+        power_form.addRow(self.power_toggle_button)
+        layout.addWidget(power_box)
 
         metadata_box = QGroupBox("Instrument / Ion Metadata (for K0 and CCS)")
         metadata_form = QFormLayout(metadata_box)
@@ -142,6 +166,18 @@ class ControlPanel(QWidget):
         self.start_button.clicked.connect(self._on_start_clicked)
         self.stop_button.clicked.connect(self._on_stop_clicked)
         self.pause_button.toggled.connect(self._on_pause_toggled)
+        self.system_parameters_button.clicked.connect(lambda: self.system_parameters_requested.emit())
+        self.save_defaults_button.clicked.connect(lambda: self.save_defaults_requested.emit())
+        self.ims_cell_kv_spin.valueChanged.connect(self._on_power_kv_changed)
+        self.ionization_kv_spin.valueChanged.connect(self._on_power_kv_changed)
+        self.power_toggle_button.toggled.connect(self._on_power_toggled)
+        self.drift_length_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
+        self.drift_voltage_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
+        self.pressure_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
+        self.temperature_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
+        self.gas_type_combo.currentTextChanged.connect(lambda _text: self.metadata_changed.emit())
+        self.ion_mz_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
+        self.ion_charge_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
 
     def build_config(self) -> ExperimentConfig:
         return ExperimentConfig(
@@ -150,9 +186,9 @@ class ControlPanel(QWidget):
             num_points=self.num_points_spin.value(),
             averages=self.averages_spin.value(),
             iterations=self.iterations_spin.value(),
-            device_name=self.device_name_edit.text(),
-            ai_channel=self.ai_channel_edit.text(),
-            co_channel=self.co_channel_edit.text(),
+            device_name=self._system_parameters.device_name,
+            ai_channel=self._system_parameters.ai_channel,
+            co_channel=self._system_parameters.co_channel,
             drift_length_cm=self.drift_length_spin.value(),
             drift_voltage_v=self.drift_voltage_spin.value(),
             pressure_torr=self.pressure_spin.value(),
@@ -178,3 +214,82 @@ class ControlPanel(QWidget):
     def _on_pause_toggled(self, checked: bool) -> None:
         self.pause_button.setText("Resume" if checked else "Pause")
         self.pause_toggled.emit(checked)
+
+    def apply_system_parameters(self, parameters: SystemParameters) -> None:
+        """Update the stored parameters and the kV spinbox ranges they imply."""
+        self._system_parameters = parameters
+        self.ims_cell_kv_spin.setMaximum(parameters.ims_cell_max_kv)
+        self.ionization_kv_spin.setMaximum(parameters.ionization_max_kv)
+
+    def apply_experiment_defaults(
+        self,
+        config: ExperimentConfig,
+        use_simulator: bool,
+        use_simulated_power: bool,
+        ims_cell_kv: float,
+        ionization_kv: float,
+    ) -> None:
+        """Populate every operator-facing field from a previously saved default set."""
+        self.pulse_width_spin.setValue(config.pulse_width_ms)
+        self.exp_length_spin.setValue(config.exp_length_ms)
+        self.num_points_spin.setValue(config.num_points)
+        self.averages_spin.setValue(config.averages)
+        self.iterations_spin.setValue(config.iterations)
+        self.drift_length_spin.setValue(config.drift_length_cm)
+        self.drift_voltage_spin.setValue(config.drift_voltage_v)
+        self.pressure_spin.setValue(config.pressure_torr)
+        self.temperature_spin.setValue(config.temperature_k)
+        gas_index = self.gas_type_combo.findText(config.gas_type)
+        if gas_index >= 0:
+            self.gas_type_combo.setCurrentIndex(gas_index)
+        self.ion_mz_spin.setValue(config.ion_mz)
+        self.ion_charge_spin.setValue(config.ion_charge)
+        self.simulator_checkbox.setChecked(use_simulator)
+        self.power_simulator_checkbox.setChecked(use_simulated_power)
+        # Block signals: populating saved kV setpoints must not write to hardware on its own.
+        self.ims_cell_kv_spin.blockSignals(True)
+        self.ims_cell_kv_spin.setValue(ims_cell_kv)
+        self.ims_cell_kv_spin.blockSignals(False)
+        self.ionization_kv_spin.blockSignals(True)
+        self.ionization_kv_spin.setValue(ionization_kv)
+        self.ionization_kv_spin.blockSignals(False)
+
+    def is_power_enabled(self) -> bool:
+        return self.power_toggle_button.isChecked()
+
+    def power_kv_values(self) -> tuple[float, float]:
+        return self.ims_cell_kv_spin.value(), self.ionization_kv_spin.value()
+
+    def metadata_values(self) -> dict:
+        """Current K0/CCS instrument+ion metadata, for recomputing peaks on the fly."""
+        return {
+            "drift_length_cm": self.drift_length_spin.value(),
+            "drift_voltage_v": self.drift_voltage_spin.value(),
+            "pressure_torr": self.pressure_spin.value(),
+            "temperature_k": self.temperature_spin.value(),
+            "gas_type": self.gas_type_combo.currentText(),
+            "ion_mz": self.ion_mz_spin.value(),
+            "ion_charge": self.ion_charge_spin.value(),
+        }
+
+    def set_power_indicator(self, enabled: bool) -> None:
+        """Sync the toggle button's visual state without re-emitting power_toggle_requested."""
+        self.power_toggle_button.blockSignals(True)
+        self.power_toggle_button.setChecked(enabled)
+        self._style_power_button(enabled)
+        self.power_toggle_button.blockSignals(False)
+
+    def _on_power_kv_changed(self, _value: float) -> None:
+        ims_kv, ionization_kv = self.power_kv_values()
+        self.power_kv_changed.emit(ims_kv, ionization_kv)
+
+    def _on_power_toggled(self, checked: bool) -> None:
+        self._style_power_button(checked)
+        self.power_toggle_requested.emit(checked)
+
+    def _style_power_button(self, enabled: bool) -> None:
+        self.power_toggle_button.setText("Power ON" if enabled else "Power OFF")
+        color = "#c62828" if enabled else "#2e7d32"  # red = on, green = off
+        self.power_toggle_button.setStyleSheet(
+            f"background-color: {color}; color: white; font-weight: bold;"
+        )

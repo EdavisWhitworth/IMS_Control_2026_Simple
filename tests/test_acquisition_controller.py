@@ -6,12 +6,15 @@ from ims_control.acquisition.experiment import ExperimentConfig
 from ims_control.daq.simulator import SimulatedDAQBackend
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QCoreApplication, Qt  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 
 @pytest.fixture(scope="module", autouse=True)
 def qt_app():
-    app = QCoreApplication.instance() or QCoreApplication([])
+    # Use QApplication (not QCoreApplication) so it's compatible with any test in the same
+    # process that also needs to create widgets (e.g. tests/test_metadata_recompute.py).
+    app = QApplication.instance() or QApplication([])
     yield app
 
 

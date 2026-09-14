@@ -54,3 +54,30 @@ class ExperimentConfig:
             raise ValueError("Iterations must be at least 1.")
         if self.pulse_width_ms >= self.exp_length_ms:
             raise ValueError("Pulse width must be shorter than the experiment length.")
+
+
+@dataclass
+class SystemParameters:
+    """DAQ channel assignments and power-supply scaling, edited via the System Parameters
+    dialog rather than the main control panel (these change rarely and are shared across runs)."""
+
+    # Acquisition DAQ channels.
+    device_name: str = "Dev1"
+    ai_channel: str = "ai0"
+    co_channel: str = "ctr0"
+
+    # Power supply channels. A single DO line both enables both supplies and drives the
+    # external LED (same signal), so there is only ever one relay/LED wire to manage.
+    ims_cell_ao_channel: str = "ao0"
+    ionization_ao_channel: str = "ao1"
+    power_do_channel: str = "port0/line0"
+
+    # Full-scale (10 V) output of each supply, used to scale kV setpoints to 0-10 V.
+    ims_cell_max_kv: float = 15.0
+    ionization_max_kv: float = 5.0
+
+    def validate(self) -> None:
+        if self.ims_cell_max_kv <= 0:
+            raise ValueError("IMS cell max kV must be positive.")
+        if self.ionization_max_kv <= 0:
+            raise ValueError("Ionization max kV must be positive.")
