@@ -84,8 +84,10 @@ class MainWindow(QMainWindow):
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         main_splitter.addWidget(self.control_panel)
         main_splitter.addWidget(right_widget)
+        main_splitter.addWidget(self.control_panel.analysis_panel)
         main_splitter.setStretchFactor(0, 0)
         main_splitter.setStretchFactor(1, 1)
+        main_splitter.setStretchFactor(2, 0)
         self.setCentralWidget(main_splitter)
 
     def _wire_signals(self) -> None:

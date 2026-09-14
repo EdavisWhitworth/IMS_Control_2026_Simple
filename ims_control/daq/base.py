@@ -27,6 +27,14 @@ class DAQBackend(ABC):
     def acquire_one(self) -> np.ndarray:
         """Trigger one gate pulse and return one replicate of `num_points` intensity samples."""
 
+    def pause(self) -> None:
+        """Halt hardware acquisition (e.g. stop the gate pulse train) so the AI buffer doesn't
+        overflow while nothing is reading it. Default no-op; override if acquire_one() runs
+        against a free-running, continuously triggered hardware task."""
+
+    def resume(self) -> None:
+        """Resume hardware acquisition after `pause()`. Default no-op."""
+
     @abstractmethod
     def close(self) -> None:
         """Release any underlying hardware/task resources."""

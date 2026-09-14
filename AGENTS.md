@@ -40,9 +40,10 @@ ims_control/
                                    simulator flag + kV setpoints) as JSON at ~/.ims_control/defaults.json
   gui/
     control_panel.py             experiment parameter form, power-supply kV controls + on/off toggle,
-                                  Peak Detection height/prominence controls, Spectrum Processing controls
-                                  (Positive Mode, Subtract Baseline, Normalize), "System Parameters..."
-                                  and "Save Current as Defaults" buttons, Start/Stop/Pause
+                                  "System Parameters..." and "Save Current as Defaults" buttons, Start/Stop/Pause.
+                                  Also builds `analysis_panel` (Instrument/Ion Metadata, Peak Detection,
+                                  Spectrum Processing group boxes) as a separate widget that MainWindow
+                                  places to the right of the plots, not inside ControlPanel's own layout
     system_parameters_dialog.py  modal dialog for DAQ channel assignments + power-supply channels/max kV
     plot_panel.py                 X/Y line plot, selector for "current (live)" vs any past iteration,
                                    light-blue baseline overlay curve, red circle markers at each detected
@@ -75,8 +76,14 @@ tests/                           pytest suite — uses SimulatedDAQBackend exclu
   unit shown in the heatmap and iteration selector.
 - **AcquisitionWorker runs on a QThread**, never on the GUI thread. Stop is cooperative —
   checked between replicate acquisitions via `QThread.requestInterruption()` (mid-replicate
-  is not interruptible). Pause blocks between replicates via a mutex-guarded flag, polled
-  with short sleeps.
+  is not interruptible). Pause blocks between iterations via a mutex-guarded flag, polled
+  with short sleeps, and calls `DAQBackend.pause()`/`resume()` around that wait. This matters
+  for `NIDAQBackend`: its CO pulse train free-runs continuously and the AI task auto-retriggers
+  off it (see gate pulse timing above), so if the worker simply stopped calling `acquire_one()`
+  without also halting the hardware, the AI task would keep buffering un-read samples during
+  the pause and eventually raise an "onboard device memory overflow" (NI-DAQmx status
+  -200361). `NIDAQBackend.pause()` stops both tasks; `resume()` restarts them in the same
+  AI-then-CO order as `configure()`. `SimulatedDAQBackend`/the base class default to a no-op.
 - **Peak parameters** (`ims_control/processing/peak_picking.py`):
   - FWHM via `scipy.signal.peak_widths(rel_height=0.5)`.
   - Resolving power = drift time / FWHM.

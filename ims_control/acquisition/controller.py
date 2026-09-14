@@ -14,7 +14,9 @@ class AcquisitionWorker(QThread):
 
     Emits signals so the GUI can update plots/tables as each iteration completes.
     Stop is cooperative: checked between replicate acquisitions, not mid-replicate.
-    Pause blocks the loop between replicates until resumed.
+    Pause blocks the loop between iterations until resumed, calling `backend.pause()`/
+    `resume()` so hardware backends can halt a free-running pulse train instead of
+    overflowing the AI buffer while nothing is reading it.
     """
 
     iteration_ready = Signal(int, np.ndarray)
@@ -55,10 +57,14 @@ class AcquisitionWorker(QThread):
             for iteration_index in range(cfg.iterations):
                 if self.isInterruptionRequested():
                     break
-                while self._is_paused():
-                    if self.isInterruptionRequested():
-                        break
-                    self.msleep(50)
+                if self._is_paused():
+                    self._backend.pause()
+                    while self._is_paused():
+                        if self.isInterruptionRequested():
+                            break
+                        self.msleep(50)
+                    if not self.isInterruptionRequested():
+                        self._backend.resume()
                 if self.isInterruptionRequested():
                     break
 

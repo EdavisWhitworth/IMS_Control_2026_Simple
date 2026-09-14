@@ -94,6 +94,21 @@ class NIDAQBackend(DAQBackend):
         data = self._ai_task.read(number_of_samples_per_channel=self._num_points, timeout=10.0)
         return np.asarray(data, dtype=float)
 
+    def pause(self) -> None:
+        # Stop both tasks so the free-running pulse train (and AI triggering on it) halts
+        # instead of silently filling the onboard/PC buffer while nothing calls acquire_one().
+        if self._co_task is not None:
+            self._co_task.stop()
+        if self._ai_task is not None:
+            self._ai_task.stop()
+
+    def resume(self) -> None:
+        # Re-arm in the same order as configure(): AI first so it's ready for CO's next edge.
+        if self._ai_task is not None:
+            self._ai_task.start()
+        if self._co_task is not None:
+            self._co_task.start()
+
     def close(self) -> None:
         for task in (self._ai_task, self._co_task):
             if task is not None:

@@ -40,6 +40,8 @@ class ControlPanel(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        self.analysis_panel = QWidget()
+        analysis_layout = QVBoxLayout(self.analysis_panel)
 
         timing_box = QGroupBox("Experiment Parameters")
         timing_form = QFormLayout(timing_box)
@@ -148,7 +150,7 @@ class ControlPanel(QWidget):
         self.ion_charge_spin.setRange(1, 20)
         self.ion_charge_spin.setValue(1)
         metadata_form.addRow("Ion charge", self.ion_charge_spin)
-        layout.addWidget(metadata_box)
+        analysis_layout.addWidget(metadata_box)
 
         peak_box = QGroupBox("Peak Detection")
         peak_form = QFormLayout(peak_box)
@@ -165,7 +167,7 @@ class ControlPanel(QWidget):
         self.peak_prominence_spin.setValue(0.0)
         self.peak_prominence_spin.setSpecialValueText("Auto (5x noise floor)")
         peak_form.addRow("Min prominence", self.peak_prominence_spin)
-        layout.addWidget(peak_box)
+        analysis_layout.addWidget(peak_box)
 
         processing_box = QGroupBox("Spectrum Processing")
         processing_form = QFormLayout(processing_box)
@@ -185,7 +187,8 @@ class ControlPanel(QWidget):
         self.normalize_scale_combo = QComboBox()
         self.normalize_scale_combo.addItems(["0-1", "0-100%"])
         processing_form.addRow("Normalize scale", self.normalize_scale_combo)
-        layout.addWidget(processing_box)
+        analysis_layout.addWidget(processing_box)
+        analysis_layout.addStretch(1)
 
         controls_layout = QHBoxLayout()
         self.start_button = QPushButton("Start")
