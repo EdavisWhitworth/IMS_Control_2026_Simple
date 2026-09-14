@@ -12,12 +12,25 @@ from ims_control.acquisition.experiment import ExperimentConfig
 
 @dataclass
 class IterationRecord:
-    """One averaged iteration: the drift spectrum plus its acquisition timestamp."""
+    """One averaged iteration: the drift spectrum plus its acquisition timestamp.
+
+    `raw_intensity` is the pristine, as-acquired/as-imported array; `intensity` is the
+    currently displayed/analyzed/exported array after applying whichever of positive-mode,
+    baseline-subtraction, and normalization are active. Recomputing `intensity` from
+    `raw_intensity` on every toggle change (rather than mutating it in place) keeps those
+    operations trivially reversible and composable in any order.
+    """
 
     index: int
     intensity: np.ndarray
+    raw_intensity: np.ndarray = None  # type: ignore[assignment]
     timestamp: datetime = field(default_factory=datetime.now)
     peaks: list[dict] = field(default_factory=list)
+    baseline: np.ndarray | None = None  # last-subtracted baseline curve, for display only
+
+    def __post_init__(self) -> None:
+        if self.raw_intensity is None:
+            self.raw_intensity = self.intensity.copy()
 
 
 class DataStore:
@@ -32,7 +45,7 @@ class DataStore:
         return np.arange(self.config.num_points) / self.config.sample_rate_hz * 1000.0
 
     def add_iteration(self, index: int, intensity: np.ndarray) -> IterationRecord:
-        record = IterationRecord(index=index, intensity=intensity)
+        record = IterationRecord(index=index, intensity=np.array(intensity, copy=True))
         self.iterations.append(record)
         return record
 

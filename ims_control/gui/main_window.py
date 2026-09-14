@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import numpy as np
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -23,11 +26,12 @@ from ims_control.gui.heatmap_panel import HeatmapPanel
 from ims_control.gui.peak_table import PeakTablePanel
 from ims_control.gui.plot_panel import PlotPanel
 from ims_control.gui.system_parameters_dialog import SystemParametersDialog
-from ims_control.io.csv_io import export_peaks_csv, export_spectra_csv
-from ims_control.io.hdf5_io import export_hdf5
-from ims_control.io.mzml_io import export_mzml
+from ims_control.io.csv_io import export_peaks_csv, export_spectra_csv, import_peaks_csv, import_spectra_csv
+from ims_control.io.hdf5_io import export_hdf5, import_hdf5
+from ims_control.io.mzml_io import export_mzml, import_mzml
 from ims_control.io.settings_io import load_defaults, save_defaults
-from ims_control.models.data_store import DataStore
+from ims_control.models.data_store import DataStore, IterationRecord
+from ims_control.processing.baseline import estimate_baseline
 from ims_control.processing.peak_picking import pick_peaks
 
 
@@ -55,10 +59,16 @@ class MainWindow(QMainWindow):
 
     def _build_layout(self) -> None:
         export_row = QHBoxLayout()
+        self.import_button = QPushButton("Import...")
         self.export_csv_button = QPushButton("Export CSV")
         self.export_hdf5_button = QPushButton("Export HDF5")
         self.export_mzml_button = QPushButton("Export mzML")
-        for button in (self.export_csv_button, self.export_hdf5_button, self.export_mzml_button):
+        for button in (
+            self.import_button,
+            self.export_csv_button,
+            self.export_hdf5_button,
+            self.export_mzml_button,
+        ):
             button.setMinimumHeight(56)
             export_row.addWidget(button)
 
@@ -88,8 +98,10 @@ class MainWindow(QMainWindow):
         self.control_panel.save_defaults_requested.connect(self._on_save_defaults_requested)
         self.control_panel.power_simulator_checkbox.toggled.connect(self._on_power_mode_toggled)
         self.control_panel.metadata_changed.connect(self._on_metadata_changed)
+        self.control_panel.spectrum_processing_changed.connect(self._on_spectrum_processing_changed)
         self.plot_panel.iteration_selection_changed.connect(self._refresh_current_view)
 
+        self.import_button.clicked.connect(self._on_import_requested)
         self.export_csv_button.clicked.connect(self._on_export_csv)
         self.export_hdf5_button.clicked.connect(self._on_export_hdf5)
         self.export_mzml_button.clicked.connect(self._on_export_mzml)
@@ -149,9 +161,10 @@ class MainWindow(QMainWindow):
         if self.store is None:
             return
         record = self.store.add_iteration(index, intensity)
+        self._apply_processing_to_record(record)
         peaks = pick_peaks(
             self.store.time_axis_ms,
-            intensity,
+            record.intensity,
             drift_length_cm=self.store.config.drift_length_cm,
             drift_voltage_v=self.store.config.drift_voltage_v,
             pressure_torr=self.store.config.pressure_torr,
@@ -159,14 +172,16 @@ class MainWindow(QMainWindow):
             gas_type=self.store.config.gas_type,
             ion_mz=self.store.config.ion_mz,
             ion_charge=self.store.config.ion_charge,
+            **self.control_panel.peak_detection_values(),
         )
-        self.store.set_peaks(index, [p.__dict__ for p in peaks])
         record.peaks = [p.__dict__ for p in peaks]
 
         self.plot_panel.set_available_iterations(len(self.store))
         self.heatmap_panel.update_image(self.store.as_2d_array(), self.store.time_axis_ms)
         if self.plot_panel.selected_iteration() == self.plot_panel.CURRENT_SENTINEL:
-            self.plot_panel.update_curve(self.store.time_axis_ms, intensity)
+            self.plot_panel.update_curve(self.store.time_axis_ms, record.intensity)
+            self.plot_panel.update_baseline(self.store.time_axis_ms, record.baseline)
+            self.plot_panel.update_peaks(peaks)
             self.peak_table.set_peaks(peaks)
 
     def _on_progress(self, current: int, total: int) -> None:
@@ -187,13 +202,46 @@ class MainWindow(QMainWindow):
         metadata = self.control_panel.metadata_values()
         for key, value in metadata.items():
             setattr(self.store.config, key, value)
+        self._recompute_all_peaks()
 
+    def _on_spectrum_processing_changed(self) -> None:
+        """Re-derive every stored iteration's intensity from its pristine raw_intensity using
+        the current positive-mode/baseline/normalize settings, then recompute peaks."""
+        if self.store is None:
+            return
         for record in self.store.iterations:
-            peaks = pick_peaks(self.store.time_axis_ms, record.intensity, **metadata)
-            record.peaks = [p.__dict__ for p in peaks]
+            self._apply_processing_to_record(record)
+        self.heatmap_panel.update_image(self.store.as_2d_array(), self.store.time_axis_ms)
+        self._recompute_all_peaks()
 
-        if len(self.store) > 0:
-            self._refresh_current_view(self.plot_panel.selected_iteration())
+    def _apply_processing_to_record(self, record: IterationRecord) -> None:
+        """Derive record.intensity (and record.baseline) fresh from record.raw_intensity so
+        toggling positive-mode/baseline/normalize is always exactly reversible and order-safe."""
+        intensity = record.raw_intensity
+        if self.control_panel.is_positive_mode():
+            intensity = -intensity
+        baseline = None
+        if self.control_panel.is_baseline_subtracted():
+            baseline = estimate_baseline(
+                self.store.time_axis_ms, intensity, self.control_panel.baseline_window_ms()
+            )
+            intensity = intensity - baseline
+        if self.control_panel.is_normalized():
+            max_val = float(np.max(np.abs(intensity))) or 1.0
+            multiplier = 100.0 if self.control_panel.normalize_scale() == "0-100%" else 1.0
+            intensity = intensity / max_val * multiplier
+        record.intensity = intensity
+        record.baseline = baseline
+
+    def _recompute_all_peaks(self) -> None:
+        if self.store is None or len(self.store) == 0:
+            return
+        metadata = self.control_panel.metadata_values()
+        peak_params = self.control_panel.peak_detection_values()
+        for record in self.store.iterations:
+            peaks = pick_peaks(self.store.time_axis_ms, record.intensity, **metadata, **peak_params)
+            record.peaks = [p.__dict__ for p in peaks]
+        self._refresh_current_view(self.plot_panel.selected_iteration())
 
     def _on_system_parameters_requested(self) -> None:
         if self.control_panel.is_power_enabled():
@@ -261,11 +309,15 @@ class MainWindow(QMainWindow):
         backend = self._get_power_backend()
         if backend is None:
             return
-        backend.set_ims_cell_kv(ims_cell_kv, self.system_parameters.ims_cell_max_kv)
+        backend.set_ims_cell_kv(
+            ims_cell_kv, self.system_parameters.ims_cell_max_kv, self.system_parameters.ims_cell_ao_full_scale_v
+        )
         # Ionization is a bias on top of the IMS cell output, so the supply's true output
         # setpoint is their sum (e.g. 5 kV cell + 3 kV bias = 8 kV written to the ionization AO).
         backend.set_ionization_output_kv(
-            ims_cell_kv + ionization_kv, self.system_parameters.ionization_max_kv
+            ims_cell_kv + ionization_kv,
+            self.system_parameters.ionization_max_kv,
+            self.system_parameters.ionization_ao_full_scale_v,
         )
 
     def _on_power_toggle_requested(self, enabled: bool) -> None:
@@ -276,9 +328,13 @@ class MainWindow(QMainWindow):
         backend.set_enabled(enabled)
         if enabled:
             ims_kv, ionization_kv = self.control_panel.power_kv_values()
-            backend.set_ims_cell_kv(ims_kv, self.system_parameters.ims_cell_max_kv)
+            backend.set_ims_cell_kv(
+                ims_kv, self.system_parameters.ims_cell_max_kv, self.system_parameters.ims_cell_ao_full_scale_v
+            )
             backend.set_ionization_output_kv(
-                ims_kv + ionization_kv, self.system_parameters.ionization_max_kv
+                ims_kv + ionization_kv,
+                self.system_parameters.ionization_max_kv,
+                self.system_parameters.ionization_ao_full_scale_v,
             )
         self._set_power_indicator(enabled)
 
@@ -297,7 +353,52 @@ class MainWindow(QMainWindow):
             iteration_index = len(self.store) - 1
         record = self.store.get_iteration(iteration_index)
         self.plot_panel.update_curve(self.store.time_axis_ms, record.intensity)
+        self.plot_panel.update_baseline(self.store.time_axis_ms, record.baseline)
+        self.plot_panel.update_peaks(record.peaks)
         self.peak_table.set_peaks(record.peaks)
+
+    def _on_import_requested(self) -> None:
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.warning(self, "Analysis running", "Stop the current run before importing data.")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import data",
+            filter="IMS data (*.h5 *.hdf5 *.csv *.mzml);;HDF5 (*.h5 *.hdf5);;CSV (*.csv);;mzML (*.mzml)",
+        )
+        if not path:
+            return
+
+        suffix = Path(path).suffix.lower()
+        try:
+            if suffix in (".h5", ".hdf5"):
+                store = import_hdf5(path)
+            elif suffix == ".csv":
+                store = import_spectra_csv(path)
+                peaks_path = Path(path).with_name(Path(path).stem + "_peaks.csv")
+                if peaks_path.exists():
+                    import_peaks_csv(store, peaks_path)
+            elif suffix == ".mzml":
+                store = import_mzml(path)
+            else:
+                QMessageBox.warning(self, "Unsupported file", f"Unrecognized file type: {suffix}")
+                return
+        except Exception as exc:
+            QMessageBox.critical(self, "Import failed", str(exc))
+            return
+
+        self.store = store
+        self.control_panel.apply_imported_config(store.config)
+        metadata = self.control_panel.metadata_values()
+        peak_params = self.control_panel.peak_detection_values()
+        for record in store.iterations:
+            self._apply_processing_to_record(record)  # honor current positive-mode/baseline/normalize state
+            peaks = pick_peaks(store.time_axis_ms, record.intensity, **metadata, **peak_params)
+            record.peaks = [p.__dict__ for p in peaks]
+
+        self.plot_panel.set_available_iterations(len(store))
+        self.heatmap_panel.update_image(store.as_2d_array(), store.time_axis_ms)
+        self._refresh_current_view(self.plot_panel.selected_iteration())
 
     def _on_export_csv(self) -> None:
         if not self._require_data():

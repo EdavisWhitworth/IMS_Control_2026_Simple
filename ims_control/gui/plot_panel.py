@@ -36,7 +36,12 @@ class PlotPanel(QWidget):
         self.plot_widget.getAxis("bottom").setTextPen("k")
         self.plot_widget.getAxis("left").setTextPen("k")
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.baseline_curve = self.plot_widget.plot(pen=pg.mkPen(color=(120, 190, 255), width=1.5))
         self.curve = self.plot_widget.plot(pen=pg.mkPen(color="k", width=1.5))
+        self.peak_markers = pg.ScatterPlotItem(
+            size=10, pen=pg.mkPen("r", width=1.5), brush=pg.mkBrush(255, 0, 0, 120), symbol="o"
+        )
+        self.plot_widget.addItem(self.peak_markers)
         layout.addWidget(self.plot_widget)
 
         self.iteration_combo.currentIndexChanged.connect(self._on_combo_changed)
@@ -58,6 +63,20 @@ class PlotPanel(QWidget):
 
     def update_curve(self, time_ms: np.ndarray, intensity: np.ndarray) -> None:
         self.curve.setData(time_ms, intensity)
+
+    def update_baseline(self, time_ms: np.ndarray, baseline: np.ndarray | None) -> None:
+        """Show the anticipated/subtracted baseline curve, or clear it if None."""
+        if baseline is None:
+            self.baseline_curve.setData([], [])
+        else:
+            self.baseline_curve.setData(time_ms, baseline)
+
+    def update_peaks(self, peaks: list) -> None:
+        """Mark each detected peak at (time_ms, height); `peaks` is PeakResult or dict-like."""
+        values = [p.__dict__ if hasattr(p, "__dict__") else p for p in peaks]
+        self.peak_markers.setData(
+            x=[v["time_ms"] for v in values], y=[v["height"] for v in values]
+        )
 
     def _on_combo_changed(self, _index: int) -> None:
         self.iteration_selection_changed.emit(self.selected_iteration())

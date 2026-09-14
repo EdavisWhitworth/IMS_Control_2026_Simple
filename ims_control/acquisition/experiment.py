@@ -72,12 +72,20 @@ class SystemParameters:
     ionization_ao_channel: str = "ao1"
     power_do_channel: str = "port0/line0"
 
-    # Full-scale (10 V) output of each supply, used to scale kV setpoints to 0-10 V.
+    # Full-scale kV output of each supply, used to scale kV setpoints to 0-full_scale_v.
     ims_cell_max_kv: float = 15.0
     ionization_max_kv: float = 5.0
+
+    # AO voltage corresponding to each supply's max kV (commonly 10 V, but not universal).
+    ims_cell_ao_full_scale_v: float = 10.0
+    ionization_ao_full_scale_v: float = 10.0
 
     def validate(self) -> None:
         if self.ims_cell_max_kv <= 0:
             raise ValueError("IMS cell max kV must be positive.")
         if self.ionization_max_kv <= 0:
             raise ValueError("Ionization max kV must be positive.")
+        if self.ims_cell_ao_full_scale_v <= 0:
+            raise ValueError("IMS cell AO full-scale voltage must be positive.")
+        if self.ionization_ao_full_scale_v <= 0:
+            raise ValueError("Ionization AO full-scale voltage must be positive.")

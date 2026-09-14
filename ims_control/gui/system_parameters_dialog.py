@@ -49,13 +49,25 @@ class SystemParametersDialog(QDialog):
         self.ims_cell_max_kv_spin.setRange(0.1, 100.0)
         self.ims_cell_max_kv_spin.setValue(parameters.ims_cell_max_kv)
         self.ims_cell_max_kv_spin.setSuffix(" kV")
-        power_form.addRow("IMS cell max output (10 V = )", self.ims_cell_max_kv_spin)
+        power_form.addRow("IMS cell max output", self.ims_cell_max_kv_spin)
+
+        self.ims_cell_full_scale_v_spin = QDoubleSpinBox()
+        self.ims_cell_full_scale_v_spin.setRange(0.1, 10.0)
+        self.ims_cell_full_scale_v_spin.setValue(parameters.ims_cell_ao_full_scale_v)
+        self.ims_cell_full_scale_v_spin.setSuffix(" V")
+        power_form.addRow("IMS cell AO full-scale voltage", self.ims_cell_full_scale_v_spin)
 
         self.ionization_max_kv_spin = QDoubleSpinBox()
         self.ionization_max_kv_spin.setRange(0.1, 100.0)
         self.ionization_max_kv_spin.setValue(parameters.ionization_max_kv)
         self.ionization_max_kv_spin.setSuffix(" kV")
-        power_form.addRow("Ionization max bias (10 V = )", self.ionization_max_kv_spin)
+        power_form.addRow("Ionization max bias", self.ionization_max_kv_spin)
+
+        self.ionization_full_scale_v_spin = QDoubleSpinBox()
+        self.ionization_full_scale_v_spin.setRange(0.1, 10.0)
+        self.ionization_full_scale_v_spin.setValue(parameters.ionization_ao_full_scale_v)
+        self.ionization_full_scale_v_spin.setSuffix(" V")
+        power_form.addRow("Ionization AO full-scale voltage", self.ionization_full_scale_v_spin)
         layout.addWidget(power_box)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -73,4 +85,6 @@ class SystemParametersDialog(QDialog):
             power_do_channel=self.power_do_edit.text(),
             ims_cell_max_kv=self.ims_cell_max_kv_spin.value(),
             ionization_max_kv=self.ionization_max_kv_spin.value(),
+            ims_cell_ao_full_scale_v=self.ims_cell_full_scale_v_spin.value(),
+            ionization_ao_full_scale_v=self.ionization_full_scale_v_spin.value(),
         )

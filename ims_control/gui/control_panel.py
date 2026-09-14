@@ -31,6 +31,7 @@ class ControlPanel(QWidget):
     power_toggle_requested = Signal(bool)  # requested enabled state
     save_defaults_requested = Signal()
     metadata_changed = Signal()
+    spectrum_processing_changed = Signal()  # positive mode, baseline subtraction, normalization
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -98,6 +99,9 @@ class ControlPanel(QWidget):
         self.ionization_kv_spin.setSuffix(" kV bias")
         power_form.addRow("Ionization", self.ionization_kv_spin)
 
+        self.positive_mode_checkbox = QCheckBox("Positive Mode (invert spectrum)")
+        power_form.addRow(self.positive_mode_checkbox)
+
         self.power_toggle_button = QPushButton("Power OFF")
         self.power_toggle_button.setCheckable(True)
         self._style_power_button(False)
@@ -146,6 +150,43 @@ class ControlPanel(QWidget):
         metadata_form.addRow("Ion charge", self.ion_charge_spin)
         layout.addWidget(metadata_box)
 
+        peak_box = QGroupBox("Peak Detection")
+        peak_form = QFormLayout(peak_box)
+        self.peak_height_spin = QDoubleSpinBox()
+        self.peak_height_spin.setRange(0.0, 1_000_000.0)
+        self.peak_height_spin.setDecimals(4)
+        self.peak_height_spin.setValue(0.0)
+        self.peak_height_spin.setSpecialValueText("Auto (no minimum)")
+        peak_form.addRow("Min height", self.peak_height_spin)
+
+        self.peak_prominence_spin = QDoubleSpinBox()
+        self.peak_prominence_spin.setRange(0.0, 1_000_000.0)
+        self.peak_prominence_spin.setDecimals(4)
+        self.peak_prominence_spin.setValue(0.0)
+        self.peak_prominence_spin.setSpecialValueText("Auto (5x noise floor)")
+        peak_form.addRow("Min prominence", self.peak_prominence_spin)
+        layout.addWidget(peak_box)
+
+        processing_box = QGroupBox("Spectrum Processing")
+        processing_form = QFormLayout(processing_box)
+        self.subtract_baseline_checkbox = QCheckBox("Subtract Baseline")
+        processing_form.addRow(self.subtract_baseline_checkbox)
+
+        self.baseline_window_spin = QDoubleSpinBox()
+        self.baseline_window_spin.setRange(0.05, 50.0)
+        self.baseline_window_spin.setDecimals(2)
+        self.baseline_window_spin.setValue(2.0)
+        self.baseline_window_spin.setSuffix(" ms")
+        processing_form.addRow("Baseline window", self.baseline_window_spin)
+
+        self.normalize_checkbox = QCheckBox("Normalize")
+        processing_form.addRow(self.normalize_checkbox)
+
+        self.normalize_scale_combo = QComboBox()
+        self.normalize_scale_combo.addItems(["0-1", "0-100%"])
+        processing_form.addRow("Normalize scale", self.normalize_scale_combo)
+        layout.addWidget(processing_box)
+
         controls_layout = QHBoxLayout()
         self.start_button = QPushButton("Start")
         self.pause_button = QPushButton("Pause")
@@ -171,6 +212,13 @@ class ControlPanel(QWidget):
         self.ims_cell_kv_spin.valueChanged.connect(self._on_power_kv_changed)
         self.ionization_kv_spin.valueChanged.connect(self._on_power_kv_changed)
         self.power_toggle_button.toggled.connect(self._on_power_toggled)
+        self.positive_mode_checkbox.toggled.connect(lambda _checked: self.spectrum_processing_changed.emit())
+        self.subtract_baseline_checkbox.toggled.connect(lambda _checked: self.spectrum_processing_changed.emit())
+        self.baseline_window_spin.valueChanged.connect(lambda _value: self.spectrum_processing_changed.emit())
+        self.normalize_checkbox.toggled.connect(lambda _checked: self.spectrum_processing_changed.emit())
+        self.normalize_scale_combo.currentTextChanged.connect(
+            lambda _text: self.spectrum_processing_changed.emit()
+        )
         self.drift_length_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
         self.drift_voltage_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
         self.pressure_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
@@ -178,6 +226,8 @@ class ControlPanel(QWidget):
         self.gas_type_combo.currentTextChanged.connect(lambda _text: self.metadata_changed.emit())
         self.ion_mz_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
         self.ion_charge_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
+        self.peak_height_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
+        self.peak_prominence_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
 
     def build_config(self) -> ExperimentConfig:
         return ExperimentConfig(
@@ -230,6 +280,23 @@ class ControlPanel(QWidget):
         ionization_kv: float,
     ) -> None:
         """Populate every operator-facing field from a previously saved default set."""
+        self._apply_timing_and_metadata_fields(config)
+        self.simulator_checkbox.setChecked(use_simulator)
+        self.power_simulator_checkbox.setChecked(use_simulated_power)
+        # Block signals: populating saved kV setpoints must not write to hardware on its own.
+        self.ims_cell_kv_spin.blockSignals(True)
+        self.ims_cell_kv_spin.setValue(ims_cell_kv)
+        self.ims_cell_kv_spin.blockSignals(False)
+        self.ionization_kv_spin.blockSignals(True)
+        self.ionization_kv_spin.setValue(ionization_kv)
+        self.ionization_kv_spin.blockSignals(False)
+
+    def apply_imported_config(self, config: ExperimentConfig) -> None:
+        """Populate timing/metadata fields from an imported data file (does not touch
+        DAQ mode, power supply setpoints, or system parameters)."""
+        self._apply_timing_and_metadata_fields(config)
+
+    def _apply_timing_and_metadata_fields(self, config: ExperimentConfig) -> None:
         self.pulse_width_spin.setValue(config.pulse_width_ms)
         self.exp_length_spin.setValue(config.exp_length_ms)
         self.num_points_spin.setValue(config.num_points)
@@ -244,18 +311,24 @@ class ControlPanel(QWidget):
             self.gas_type_combo.setCurrentIndex(gas_index)
         self.ion_mz_spin.setValue(config.ion_mz)
         self.ion_charge_spin.setValue(config.ion_charge)
-        self.simulator_checkbox.setChecked(use_simulator)
-        self.power_simulator_checkbox.setChecked(use_simulated_power)
-        # Block signals: populating saved kV setpoints must not write to hardware on its own.
-        self.ims_cell_kv_spin.blockSignals(True)
-        self.ims_cell_kv_spin.setValue(ims_cell_kv)
-        self.ims_cell_kv_spin.blockSignals(False)
-        self.ionization_kv_spin.blockSignals(True)
-        self.ionization_kv_spin.setValue(ionization_kv)
-        self.ionization_kv_spin.blockSignals(False)
 
     def is_power_enabled(self) -> bool:
         return self.power_toggle_button.isChecked()
+
+    def is_positive_mode(self) -> bool:
+        return self.positive_mode_checkbox.isChecked()
+
+    def is_baseline_subtracted(self) -> bool:
+        return self.subtract_baseline_checkbox.isChecked()
+
+    def baseline_window_ms(self) -> float:
+        return self.baseline_window_spin.value()
+
+    def is_normalized(self) -> bool:
+        return self.normalize_checkbox.isChecked()
+
+    def normalize_scale(self) -> str:
+        return self.normalize_scale_combo.currentText()
 
     def power_kv_values(self) -> tuple[float, float]:
         return self.ims_cell_kv_spin.value(), self.ionization_kv_spin.value()
@@ -270,6 +343,14 @@ class ControlPanel(QWidget):
             "gas_type": self.gas_type_combo.currentText(),
             "ion_mz": self.ion_mz_spin.value(),
             "ion_charge": self.ion_charge_spin.value(),
+        }
+
+    def peak_detection_values(self) -> dict:
+        """Min height/prominence for find_peaks; 0.0 (the special "Auto" value) means None,
+        letting pick_peaks fall back to its own automatic thresholds."""
+        return {
+            "height": self.peak_height_spin.value() or None,
+            "prominence": self.peak_prominence_spin.value() or None,
         }
 
     def set_power_indicator(self, enabled: bool) -> None:

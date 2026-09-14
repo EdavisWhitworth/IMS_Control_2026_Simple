@@ -19,6 +19,12 @@ def test_kv_to_volts_zero_max_is_safe():
     assert kv_to_volts(5.0, 0.0) == 0.0
 
 
+def test_kv_to_volts_custom_full_scale():
+    assert kv_to_volts(15.0, 15.0, full_scale_v=5.0) == 5.0
+    assert kv_to_volts(7.5, 15.0, full_scale_v=5.0) == 2.5
+    assert kv_to_volts(30.0, 15.0, full_scale_v=5.0) == 5.0  # clipped
+
+
 def test_simulated_power_supply_backend_tracks_state():
     backend = SimulatedPowerSupplyBackend()
     backend.configure(
@@ -48,3 +54,7 @@ def test_system_parameters_validate():
         SystemParameters(ims_cell_max_kv=0.0).validate()
     with pytest.raises(ValueError):
         SystemParameters(ionization_max_kv=-1.0).validate()
+    with pytest.raises(ValueError):
+        SystemParameters(ims_cell_ao_full_scale_v=0.0).validate()
+    with pytest.raises(ValueError):
+        SystemParameters(ionization_ao_full_scale_v=-1.0).validate()

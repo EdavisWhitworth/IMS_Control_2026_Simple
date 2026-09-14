@@ -27,23 +27,31 @@ ims_control/
                                  (DAQ channels, power-supply channels/scaling — edited rarely, via a dialog)
     controller.py                AcquisitionWorker(QThread) — runs the iterate/average acquisition loop, start/stop/pause
   models/
-    data_store.py                DataStore/IterationRecord — in-memory results (raw spectra + picked peaks) for one run
+    data_store.py                DataStore/IterationRecord — in-memory results for one run; each record
+                                   keeps a pristine `raw_intensity` plus a derived, currently-displayed
+                                   `intensity` (see "Spectrum processing pipeline" below)
   processing/
-    baseline.py                  noise-window mean/std (SNR denominator), default = last 10 ms of trace
+    baseline.py                  noise-window mean/std (SNR denominator) + estimate_baseline() (rolling
+                                   min/mean envelope) used for the optional baseline-subtraction feature
     peak_picking.py               scipy find_peaks/peak_widths wrapper; computes FWHM, resolving power, SNR, K0, CCS
   io/
-    csv_io.py / hdf5_io.py / mzml_io.py   export (and for HDF5, import) of a DataStore
+    csv_io.py / hdf5_io.py / mzml_io.py   export and import of a DataStore, in each of the three formats
     settings_io.py                save/load operator defaults (ExperimentConfig + SystemParameters +
                                    simulator flag + kV setpoints) as JSON at ~/.ims_control/defaults.json
   gui/
     control_panel.py             experiment parameter form, power-supply kV controls + on/off toggle,
-                                  "System Parameters..." and "Save Current as Defaults" buttons, Start/Stop/Pause
+                                  Peak Detection height/prominence controls, Spectrum Processing controls
+                                  (Positive Mode, Subtract Baseline, Normalize), "System Parameters..."
+                                  and "Save Current as Defaults" buttons, Start/Stop/Pause
     system_parameters_dialog.py  modal dialog for DAQ channel assignments + power-supply channels/max kV
-    plot_panel.py                 X/Y line plot, selector for "current (live)" vs any past iteration
+    plot_panel.py                 X/Y line plot, selector for "current (live)" vs any past iteration,
+                                   light-blue baseline overlay curve, red circle markers at each detected
+                                   peak's (time, height)
     heatmap_panel.py               2D colormap of all iterations (ImageItem + HistogramLUTItem, "spectrum" preset)
     peak_table.py                  table of picked-peak parameters for the selected iteration
     main_window.py                 wires everything together; owns the DataStore, AcquisitionWorker, and
-                                    PowerSupplyBackend; sets the window background green/red for power off/on
+                                    PowerSupplyBackend; "Import..." button loads a CSV/HDF5/mzML file into
+                                    a fresh DataStore, replacing the current run's in-memory data
 tests/                           pytest suite — uses SimulatedDAQBackend exclusively (no hardware needed)
 ```
 
@@ -85,17 +93,59 @@ tests/                           pytest suite — uses SimulatedDAQBackend exclu
     `ControlPanel.metadata_changed`; `MainWindow._on_metadata_changed` updates `store.config`
     in place and recomputes peaks for **every** stored iteration, live or idle, so displayed
     parameters always reflect the current fields rather than the values at Start time.
+  - `ControlPanel.peak_height_spin`/`peak_prominence_spin` (Peak Detection group) feed
+    `find_peaks`'s `height`/`prominence` args via `peak_detection_values()`. Both use `0.0` as
+    a `QDoubleSpinBox` "Auto" special value (mapped to `None` so `pick_peaks` falls back to its
+    own automatic threshold) — never treat `0.0` as a literal height/prominence of zero.
+    Changing either spinbox also emits `metadata_changed`, triggering the same full recompute.
+  - `PlotPanel.update_peaks()` draws a red circle marker at each detected peak's
+    `(time_ms, height)` on the line plot; called alongside `update_curve()`/peak-table updates
+    everywhere peaks are (re)computed — keep these three in sync when adding new call sites.
 - **mzML export is intentionally minimal** — hand-rolled (no `psims` dependency), one
   `<spectrum>` per averaged iteration, drift time (ms) written into the m/z array slot and
   detector signal into the intensity array slot. Not indexed mzML; not validated against
   the full PSI-MS CV. If a downstream tool needs stricter schema compliance, revisit with
   a real mzML library rather than extending the hand-rolled writer indefinitely.
+- **Import** (`MainWindow._on_import_requested`, dispatches by file suffix to
+  `import_hdf5`/`import_spectra_csv`+`import_peaks_csv`/`import_mzml`): only HDF5 round-trips
+  the full `ExperimentConfig` (including instrument/ion metadata) since it's the only format
+  that stores it. CSV and mzML reconstruct `ExperimentConfig` with default metadata and infer
+  `num_points`/`exp_length_ms` from the saved time axis — `exp_length_ms` must be recovered as
+  `dt_ms * num_points` (the sample **spacing** times point count), not `time[-1] - time[0]`,
+  to exactly match `DataStore.time_axis_ms`'s `arange(num_points)` convention. If an imported
+  iteration has no peaks (mzML never stores them; CSV only if the sibling `*_peaks.csv` is
+  missing), peaks are computed on the spot with whatever metadata is currently in the GUI.
+  Importing replaces the entire in-memory `DataStore` — it does not merge with a live run.
+- **Positive Mode** (`ControlPanel.positive_mode_checkbox`, above the Power toggle button):
+  some instrument amplifiers output an inverted signal, so this checkbox multiplies intensity
+  by -1. See "Spectrum processing pipeline" below for how this composes with baseline
+  subtraction and normalization.
+- **Spectrum processing pipeline** (`MainWindow._apply_processing_to_record`): each
+  `IterationRecord` keeps a pristine `raw_intensity` (as acquired/imported, never mutated)
+  separate from the derived `intensity` actually plotted, heatmapped, peak-picked, and
+  exported. Whenever positive mode, "Subtract Baseline", "Normalize", or their parameters
+  change, `_on_spectrum_processing_changed` re-derives `intensity` **from `raw_intensity`**
+  for every stored iteration, in a fixed order: (1) positive-mode sign flip, (2) baseline
+  subtraction via `estimate_baseline()` (rolling min + smoothing envelope, window width in ms
+  from `ControlPanel.baseline_window_ms()`; the subtracted curve is cached on
+  `record.baseline` and drawn as `PlotPanel`'s light-blue overlay), (3) normalization to 0-1
+  or 0-100% (`ControlPanel.normalize_scale()`) by dividing by `max(abs(intensity))`.
+  **Always recompute from `raw_intensity`, never mutate `intensity` in place or try to
+  "undo" a transform by re-applying its inverse to the current (possibly further-modified)
+  `intensity`** — with three composable toggles, naive in-place mutation is not reliably
+  reversible in arbitrary toggle order, whereas recomputing from the untouched raw copy always
+  is. Live iterations get the same pipeline applied once in `_on_iteration_ready` via
+  `_apply_processing_to_record`. Peaks are always recomputed after any pipeline change via
+  `_recompute_all_peaks`, working identically during a live run, after Stop, or after Import.
+  Exports (CSV/HDF5/mzML) always reflect the processed `intensity`, not `raw_intensity`.
 - **DAQ channel names are always user-configurable** (GUI text fields in `ControlPanel`),
   never hardcoded constants — different instruments/rewiring should not require code changes.
 - **Power supplies (IMS cell / Ionization)**: `ims_control/daq/power_supply.py` defines
   `PowerSupplyBackend` (simulated + real NI-DAQmx). Operator kV setpoints are scaled to
-  0-10 V analog outputs via `kv_to_volts(kv, max_kv)`; `max_kv` for each supply lives in
-  `SystemParameters`, edited via the System Parameters dialog. A single "Power" toggle in
+  0-`full_scale_v` analog outputs via `kv_to_volts(kv, max_kv, full_scale_v)`; `max_kv` and
+  `full_scale_v` (default 10 V, but not all supplies use a 10 V control input) for each
+  supply live in `SystemParameters`, edited via the System Parameters dialog. A single "Power"
+  toggle in
   `ControlPanel` drives both supplies together through **one** shared DO line
   (`SystemParameters.power_do_channel`) that both enables the supplies and drives the
   external indicator LED (`PowerSupplyBackend.set_enabled`) — do not split this into

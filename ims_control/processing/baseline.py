@@ -1,8 +1,9 @@
-"""Baseline noise estimation over a user-selectable window of the drift spectrum."""
+"""Baseline noise estimation and full-trace baseline curve estimation."""
 
 from __future__ import annotations
 
 import numpy as np
+from scipy.ndimage import minimum_filter1d, uniform_filter1d
 
 
 def noise_stats(
@@ -25,3 +26,17 @@ def default_noise_window(time_ms: np.ndarray) -> tuple[float, float]:
     end = float(time_ms[-1])
     start = max(float(time_ms[0]), end - 10.0)
     return start, end
+
+
+def estimate_baseline(time_ms: np.ndarray, intensity: np.ndarray, window_ms: float) -> np.ndarray:
+    """Rolling-minimum + smoothing envelope that follows a slowly varying noise floor.
+
+    `window_ms` sets the width of both the minimum filter and the smoothing pass; wider
+    windows follow slower baseline drift but risk absorbing genuine (wide) peaks.
+    """
+    if len(time_ms) < 2:
+        return np.zeros_like(intensity)
+    dt_ms = float(time_ms[1] - time_ms[0])
+    window_samples = max(1, int(round(window_ms / dt_ms)))
+    envelope = minimum_filter1d(intensity, size=window_samples, mode="nearest")
+    return uniform_filter1d(envelope, size=window_samples, mode="nearest")

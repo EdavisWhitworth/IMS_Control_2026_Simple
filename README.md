@@ -38,5 +38,7 @@ without an instrument connected.
    past iteration; the heatmap shows all iterations at once.
 5. The peak table updates for whichever iteration is selected.
 6. Use the Export buttons to save the run as CSV, HDF5, or mzML.
+7. Use **Import...** to load a previously saved CSV, HDF5, or mzML file for review —
+   this replaces the current in-memory run.
 
 See [AGENTS.md](AGENTS.md) for architecture details relevant to future development.
