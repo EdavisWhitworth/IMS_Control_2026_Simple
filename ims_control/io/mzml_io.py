@@ -1,10 +1,13 @@
 """Minimal hand-rolled mzML writer for IMS drift-time spectra.
 
 Not a full-featured mzML implementation (no indexed mzML, no compression, no CV
-validation against the full PSI-MS ontology) -- just enough structurally valid
-mzML to be readable by common tools. Each averaged iteration becomes one
-<spectrum>, with drift time (ms) written into the m/z array slot and detector
-intensity into the intensity array slot.
+validation against the full PSI-MS ontology). Each averaged iteration becomes one
+<spectrum> labelled as a *profile* spectrum (MS:1000128: the full sampled trace, not
+centroided). The x axis is IMS drift time, stored in the standard "time array"
+(MS:1000595) with unit millisecond (UO:0000028) -- it is NOT m/z. The y axis is the
+"intensity array" (MS:1000515). File-level userParams (ims_axis_description, ims_x_axis,
+ims_x_units, ims_y_axis, ims_y_units) state the axes explicitly. The reader also accepts
+legacy files that wrote drift time into the "m/z array" slot.
 """
 
 from __future__ import annotations
@@ -25,16 +28,24 @@ from ims_control.processing.settings import ProcessingSettings
 
 _NO_COMPRESSION = ("MS:1000576", "no compression")
 _FLOAT64 = ("MS:1000523", "64-bit float")
-_MZ_ARRAY = ("MS:1000514", "m/z array")
+_MZ_ARRAY = ("MS:1000514", "m/z array")  # legacy files (pre-R1.C4.3) stored drift time here
+_TIME_ARRAY = ("MS:1000595", "time array")
 _INTENSITY_ARRAY = ("MS:1000515", "intensity array")
 _MS_LEVEL = ("MS:1000511", "ms level")
-_CENTROID = ("MS:1000127", "centroid spectrum")
+_PROFILE = ("MS:1000128", "profile spectrum")
+_MILLISECOND = ("UO", "UO:0000028", "millisecond")
+_AXIS_ARRAY_ACCESSIONS = (_TIME_ARRAY[0], _MZ_ARRAY[0])
+_AXIS_DESCRIPTION = "x axis is IMS drift time in ms (not m/z); y is detector signal"
 
 
-def _cv_param(parent: Element, accession: str, name: str, value: str | None = None) -> None:
+def _cv_param(
+    parent: Element, accession: str, name: str, value: str | None = None, unit: tuple[str, str, str] | None = None
+) -> None:
     attrs = {"cvRef": "MS", "accession": accession, "name": name}
     if value is not None:
         attrs["value"] = value
+    if unit is not None:
+        attrs.update({"unitCvRef": unit[0], "unitAccession": unit[1], "unitName": unit[2]})
     SubElement(parent, "cvParam", attrs)
 
 
@@ -61,14 +72,19 @@ def _read_settings(path: Path) -> tuple[dict, dict] | None:
     return None
 
 
-def _binary_data_array(parent: Element, values, array_type: tuple[str, str]) -> None:
+def _binary_data_array(
+    parent: Element, values, array_type: tuple[str, str], unit: tuple[str, str, str] | None = None,
+    user_params: dict[str, str] | None = None,
+) -> None:
     encoded = base64.b64encode(struct.pack(f"<{len(values)}d", *values)).decode("ascii")
     bda = SubElement(
         parent, "binaryDataArray", {"encodedLength": str(len(encoded))}
     )
     _cv_param(bda, *_FLOAT64)
     _cv_param(bda, *_NO_COMPRESSION)
-    _cv_param(bda, *array_type)
+    _cv_param(bda, *array_type, unit=unit)
+    for name, value in (user_params or {}).items():
+        SubElement(bda, "userParam", {"name": name, "value": value})
     binary = SubElement(bda, "binary")
     binary.text = encoded
 
@@ -87,18 +103,29 @@ def export_mzml(store: DataStore, path: str | Path, data: str = DEFAULT_EXPORT) 
 def _write_mzml(store: DataStore, path: Path, variant: str) -> None:
     mzml = Element("mzML", {"xmlns": "http://psi.hupo.org/ms/mzml", "version": "1.1.0"})
 
-    cv_list = SubElement(mzml, "cvList", {"count": "1"})
+    cv_list = SubElement(mzml, "cvList", {"count": "2"})
     SubElement(
         cv_list,
         "cv",
         {"id": "MS", "fullName": "Proteomics Standards Initiative Mass Spectrometry Ontology",
          "URI": "https://raw.githubusercontent.com/HUPO-PSI/psi-ms-CV/master/psi-ms.obo"},
     )
+    SubElement(
+        cv_list,
+        "cv",
+        {"id": "UO", "fullName": "Unit Ontology",
+         "URI": "https://raw.githubusercontent.com/bio-ontology-research-group/unit-ontology/master/unit.obo"},
+    )
 
     file_desc = SubElement(mzml, "fileDescription")
     file_content = SubElement(file_desc, "fileContent")
-    _cv_param(file_content, *_CENTROID)
+    _cv_param(file_content, *_PROFILE)
     SubElement(file_content, "userParam", {"name": "ims_data_variant", "value": variant})
+    SubElement(file_content, "userParam", {"name": "ims_axis_description", "value": _AXIS_DESCRIPTION})
+    SubElement(file_content, "userParam", {"name": "ims_x_axis", "value": "drift time"})
+    SubElement(file_content, "userParam", {"name": "ims_x_units", "value": "ms"})
+    SubElement(file_content, "userParam", {"name": "ims_y_axis", "value": "detector signal"})
+    SubElement(file_content, "userParam", {"name": "ims_y_units", "value": "V (raw) / arbitrary after processing"})
     _write_settings_params(file_content, store)
 
     run = SubElement(mzml, "run", {"id": "ims_run"})
@@ -117,12 +144,15 @@ def _write_mzml(store: DataStore, path: Path, variant: str) -> None:
             },
         )
         _cv_param(spectrum, _MS_LEVEL[0], _MS_LEVEL[1], value="1")
-        _cv_param(spectrum, *_CENTROID)
+        _cv_param(spectrum, *_PROFILE)
 
         binary_data_array_list = SubElement(
             spectrum, "binaryDataArrayList", {"count": "2"}
         )
-        _binary_data_array(binary_data_array_list, list(time_ms), _MZ_ARRAY)
+        _binary_data_array(
+            binary_data_array_list, list(time_ms), _TIME_ARRAY, unit=_MILLISECOND,
+            user_params={"ims_axis": "drift time"},
+        )
         _binary_data_array(binary_data_array_list, list(values), _INTENSITY_ARRAY)
 
     ElementTree(mzml).write(path, xml_declaration=True, encoding="UTF-8")
@@ -137,7 +167,7 @@ def _decode_binary_data_array(bda: Element) -> tuple[str, list[float]]:
     array_type = None
     for cv_param in bda:
         if _local_tag(cv_param) == "cvParam" and cv_param.get("accession") in (
-            _MZ_ARRAY[0],
+            *_AXIS_ARRAY_ACCESSIONS,
             _INTENSITY_ARRAY[0],
         ):
             array_type = cv_param.get("accession")
@@ -161,7 +191,7 @@ def _read_mzml_spectra(path: Path) -> tuple[list[float], list[tuple[int, list[fl
         mz_values = intensity_values = None
         for bda in binary_data_array_list:
             array_type, values = _decode_binary_data_array(bda)
-            if array_type == _MZ_ARRAY[0]:
+            if array_type in _AXIS_ARRAY_ACCESSIONS:
                 mz_values = values
             elif array_type == _INTENSITY_ARRAY[0]:
                 intensity_values = values

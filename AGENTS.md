@@ -125,8 +125,10 @@ tests/                           pytest suite — uses SimulatedDAQBackend exclu
     `(time_ms, height)` on the line plot; called alongside `update_curve()`/peak-table updates
     everywhere peaks are (re)computed — keep these three in sync when adding new call sites.
 - **mzML export is intentionally minimal** — hand-rolled (no `psims` dependency), one
-  `<spectrum>` per averaged iteration, drift time (ms) written into the m/z array slot and
-  detector signal into the intensity array slot. Not indexed mzML; not validated against
+  `<spectrum>` per averaged iteration, labelled **profile spectrum** (MS:1000128, never
+  "centroid"). Drift time goes in the standard **time array** (MS:1000595, unit ms via UO:0000028),
+  NOT the m/z array; file-level `ims_x_axis`/`ims_x_units`/`ims_y_*` userParams state the axes. The
+  reader still accepts legacy files with drift time in the m/z array (MS:1000514). Not indexed mzML; not validated against
   the full PSI-MS CV. If a downstream tool needs stricter schema compliance, revisit with
   a real mzML library rather than extending the hand-rolled writer indefinitely.
 - **Import** (`MainWindow._on_import_requested`, dispatches by file suffix to
