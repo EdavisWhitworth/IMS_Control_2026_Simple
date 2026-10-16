@@ -42,6 +42,9 @@ class DataStore:
         self.iterations: list[IterationRecord] = []
         # Settings that produced `intensity`/peaks; kept current by MainWindow, written by exporters.
         self.processing = ProcessingSettings()
+        # False for imports that carried no instrument/ion metadata (the config then holds
+        # placeholder defaults). K0/CCS are withheld until the operator confirms the metadata.
+        self.metadata_confirmed = True
 
     @property
     def time_axis_ms(self) -> np.ndarray:

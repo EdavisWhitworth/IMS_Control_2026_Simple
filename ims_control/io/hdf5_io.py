@@ -36,6 +36,7 @@ def export_hdf5(store: DataStore, path: str | Path, data: str = DEFAULT_EXPORT) 
             elif isinstance(value, list):
                 value = "; ".join(value)
             proc_group.attrs[key] = value
+        f.attrs["metadata_confirmed"] = store.metadata_confirmed
         meta_group = f.create_group("instrument_metadata")
         for key, value in config_dict.items():
             meta_group.attrs[key] = str(value) if isinstance(value, (list, dict)) else value
@@ -63,6 +64,8 @@ def import_hdf5(path: str | Path) -> DataStore:
         config = ExperimentConfig(**config_dict)
 
         store = DataStore(config)
+        # HDF5 always stores the full config; older files predate the flag and count as confirmed.
+        store.metadata_confirmed = bool(f.attrs.get("metadata_confirmed", True))
         if "processing_json" in f.attrs:
             store.processing = ProcessingSettings.from_dict(json.loads(f.attrs["processing_json"]))
         processed = np.asarray(f["intensity"]) if "intensity" in f else None

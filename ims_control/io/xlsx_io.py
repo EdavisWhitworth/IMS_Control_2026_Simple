@@ -58,6 +58,10 @@ def export_xlsx(store: DataStore, path: str | Path, data: str = DEFAULT_EXPORT) 
     for key, value, description in store.processing.to_rows():
         ws.append(["processing_and_peak_detection", key, value, description])
     ws.append(["export", "exported_data", ",".join(variants), "which spectra sheets are present"])
+    ws.append(
+        ["export", "metadata_confirmed", store.metadata_confirmed,
+         "False = instrument/ion metadata above are unconfirmed placeholders; K0/CCS withheld"]
+    )
 
     path = Path(path)
     wb.save(path)
@@ -93,13 +97,17 @@ def import_xlsx(path: str | Path) -> DataStore:
     dt_ms = float(time_ms[1] - time_ms[0]) if num_points > 1 else 1.0
     config = ExperimentConfig(exp_length_ms=dt_ms * num_points, num_points=num_points)
     processing = ProcessingSettings()
+    confirmed = False  # no Settings sheet -> no metadata
     if SETTINGS_SHEET in wb.sheetnames:
+        confirmed = True
         meta, proc_rows = {}, {}
         for row in list(wb[SETTINGS_SHEET].iter_rows(values_only=True))[1:]:
             if row[0] == "instrument_ion_metadata":
                 meta[row[1]] = row[2]
             elif row[0] == "processing_and_peak_detection":
                 proc_rows[row[1]] = row[2]
+            elif row[0] == "export" and row[1] == "metadata_confirmed":
+                confirmed = bool(row[2])
         known = {f.name: f for f in fields(ExperimentConfig)}
         for key, value in meta.items():
             if key in known and key != "created_at" and value is not None:
@@ -111,6 +119,7 @@ def import_xlsx(path: str | Path) -> DataStore:
         processing = ProcessingSettings.from_rows(proc_rows)
     store = DataStore(config)
     store.processing = processing
+    store.metadata_confirmed = confirmed
     for col, label in enumerate(labels):
         store.add_iteration(
             int(label.rsplit("_", 1)[-1]), proc[:, col], None if raw is None else raw[:, col]
