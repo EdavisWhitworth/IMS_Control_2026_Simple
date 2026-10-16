@@ -114,7 +114,7 @@ class MainWindow(QMainWindow):
         self.control_panel.metadata_changed.connect(self._on_metadata_changed)
         self.control_panel.spectrum_processing_changed.connect(self._on_spectrum_processing_changed)
         self.plot_panel.iteration_selection_changed.connect(self._refresh_current_view)
-        self.plot_panel.raw_overlay_toggled.connect(
+        self.control_panel.raw_overlay_changed.connect(
             lambda: self._refresh_current_view(self.plot_panel.selected_iteration())
         )
 
@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
         self.heatmap_panel.update_image(self.store.as_2d_array(), self.store.time_axis_ms)
         if self.plot_panel.selected_iteration() == self.plot_panel.CURRENT_SENTINEL:
             self.plot_panel.update_curve(self.store.time_axis_ms, record.intensity)
-            self.plot_panel.update_raw(self.store.time_axis_ms, record.raw_intensity)
+            self.plot_panel.update_raw(self.store.time_axis_ms, self._raw_overlay_for(record))
             self.plot_panel.update_baseline(self.store.time_axis_ms, record.baseline)
             self.plot_panel.update_peaks(peaks)
             self.peak_table.set_peaks(peaks)
@@ -364,6 +364,9 @@ class MainWindow(QMainWindow):
     def _set_power_indicator(self, enabled: bool) -> None:
         self.control_panel.set_power_indicator(enabled)
 
+    def _raw_overlay_for(self, record: IterationRecord):
+        return record.raw_intensity if self.control_panel.show_raw_overlay() else None
+
     def _refresh_current_view(self, iteration_index: int) -> None:
         if self.store is None or len(self.store) == 0:
             return
@@ -371,7 +374,7 @@ class MainWindow(QMainWindow):
             iteration_index = len(self.store) - 1
         record = self.store.get_iteration(iteration_index)
         self.plot_panel.update_curve(self.store.time_axis_ms, record.intensity)
-        self.plot_panel.update_raw(self.store.time_axis_ms, record.raw_intensity)
+        self.plot_panel.update_raw(self.store.time_axis_ms, self._raw_overlay_for(record))
         self.plot_panel.update_baseline(self.store.time_axis_ms, record.baseline)
         self.plot_panel.update_peaks(record.peaks)
         self.peak_table.set_peaks(record.peaks)

@@ -5,14 +5,13 @@ from __future__ import annotations
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 
 class PlotPanel(QWidget):
     """Shows the drift spectrum for the iteration chosen in the selector combo box."""
 
     iteration_selection_changed = Signal(int)  # -1 means "current/live"
-    raw_overlay_toggled = Signal()
     CURRENT_SENTINEL = -1
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -25,12 +24,6 @@ class PlotPanel(QWidget):
         self.iteration_combo.addItem("Current (live)", self.CURRENT_SENTINEL)
         selector_row.addWidget(self.iteration_combo)
         selector_row.addStretch(1)
-        self.show_raw_checkbox = QCheckBox("Overlay raw")
-        self.show_raw_checkbox.setToolTip(
-            "Draw the as-acquired raw trace (gray, dashed) beneath the processed trace. Raw is on its "
-            "own scale, so it will not line up with a normalized or baseline-subtracted trace."
-        )
-        selector_row.addWidget(self.show_raw_checkbox)
         layout.addLayout(selector_row)
 
         self.plot_widget = pg.PlotWidget()
@@ -55,11 +48,10 @@ class PlotPanel(QWidget):
         layout.addWidget(self.plot_widget)
 
         self.iteration_combo.currentIndexChanged.connect(self._on_combo_changed)
-        self.show_raw_checkbox.toggled.connect(lambda _c: self.raw_overlay_toggled.emit())
 
     def update_raw(self, time_ms: np.ndarray, raw: np.ndarray | None) -> None:
-        """Draw the raw overlay when enabled; clear it otherwise."""
-        if raw is None or not self.show_raw_checkbox.isChecked():
+        """Draw the raw overlay; pass None to clear it."""
+        if raw is None:
             self.raw_curve.setData([], [])
         else:
             self.raw_curve.setData(time_ms, raw)
