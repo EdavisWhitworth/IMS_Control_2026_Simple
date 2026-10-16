@@ -139,6 +139,13 @@ tests/                           pytest suite — uses SimulatedDAQBackend exclu
   iteration has no peaks (mzML never stores them; CSV only if the sibling `*_peaks.csv` is
   missing), peaks are computed on the spot with whatever metadata is currently in the GUI.
   Importing replaces the entire in-memory `DataStore` — it does not merge with a live run.
+  **Metadata gating**: `DataStore.metadata_confirmed` is True for live runs and for files that carry
+  their own metadata (HDF5, Excel/mzML with settings). Legacy CSV and metadata-less Excel/mzML
+  import as False: `MainWindow` shows `metadata_banner`, calls `pick_peaks(compute_mobility=False)`
+  (K0/CCS = None, table shows "withheld"), and editing metadata fields does NOT release them — only
+  `_on_confirm_metadata` (applies GUI metadata to `store.config`, sets the flag, recomputes). The flag
+  is persisted in HDF5/Excel/mzML so an unconfirmed export stays unconfirmed. Always route peak picking
+  through `MainWindow._pick_peaks`.
 - **Positive Mode** (`ControlPanel.positive_mode_checkbox`, above the Power toggle button):
   some instrument amplifiers output an inverted signal, so this checkbox multiplies intensity
   by -1. See "Spectrum processing pipeline" below for how this composes with baseline

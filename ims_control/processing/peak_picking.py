@@ -42,7 +42,7 @@ class PeakResult:
     fwhm_ms: float
     resolving_power: float
     snr: float
-    k0: float
+    k0: float | None  # k0/ccs_a2 are None when instrument metadata is unconfirmed (withheld)
     ccs_a2: float | None
 
 
@@ -97,8 +97,11 @@ def pick_peaks(
     noise_window_ms: tuple[float, float] | None = None,
     height: float | None = None,
     prominence: float | None = None,
+    compute_mobility: bool = True,
 ) -> list[PeakResult]:
-    """Find peaks in a drift spectrum and compute time/FWHM/resolving power/SNR/K0/CCS for each."""
+    """Find peaks in a drift spectrum and compute time/FWHM/resolving power/SNR/K0/CCS for each.
+
+    With `compute_mobility=False` (instrument metadata unconfirmed) K0 and CCS are None."""
     if noise_window_ms is None:
         noise_window_ms = default_noise_window(time_ms)
     _, baseline_std = noise_stats(time_ms, intensity, *noise_window_ms)
@@ -125,8 +128,11 @@ def pick_peaks(
         peak_height = float(intensity[peak_idx])
         resolving_power = t_peak_ms / fwhm_ms if fwhm_ms > 0 else float("inf")
         snr = peak_height / baseline_std
-        k0 = reduced_mobility(t_peak_ms, drift_length_cm, drift_voltage_v, pressure_torr, temperature_k)
-        ccs = collision_cross_section(k0, ion_mz, ion_charge, temperature_k, gas_type)
+        if compute_mobility:
+            k0 = reduced_mobility(t_peak_ms, drift_length_cm, drift_voltage_v, pressure_torr, temperature_k)
+            ccs = collision_cross_section(k0, ion_mz, ion_charge, temperature_k, gas_type)
+        else:
+            k0 = ccs = None
         results.append(
             PeakResult(
                 index=int(peak_idx),

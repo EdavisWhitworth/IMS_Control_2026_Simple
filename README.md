@@ -51,6 +51,8 @@ without an instrument connected.
    original data is preserved through export/import, run
    `$env:PYTHONPATH='.'; .venv\Scripts\python.exe scripts\verify_raw_roundtrip.py`.
 7. Use **Import...** to load a previously saved Excel, HDF5, mzML (or legacy CSV) file for review —
-   this replaces the current in-memory run.
+   this replaces the current in-memory run. If the file carries no instrument/ion metadata (legacy CSV,
+   or Excel/mzML without settings), a yellow banner appears, K0/CCS show "withheld", and nothing is
+   computed from placeholder defaults until you enter the correct values and click **Confirm metadata**.
 
 See [AGENTS.md](AGENTS.md) for architecture details relevant to future development.

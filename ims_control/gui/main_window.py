@@ -8,7 +8,9 @@ import numpy as np
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -86,6 +88,21 @@ class MainWindow(QMainWindow):
 
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
+        self.metadata_banner = QFrame()
+        self.metadata_banner.setStyleSheet(
+            "QFrame { background: #fff3cd; border: 1px solid #e0a800; } QLabel { border: none; }"
+        )
+        banner_layout = QHBoxLayout(self.metadata_banner)
+        self.metadata_banner_label = QLabel(
+            "Instrument/ion metadata were not found in the imported file. The metadata fields hold "
+            "placeholder defaults, so K0 and CCS are withheld. Enter the correct values, then confirm."
+        )
+        self.metadata_banner_label.setWordWrap(True)
+        banner_layout.addWidget(self.metadata_banner_label, 1)
+        self.confirm_metadata_button = QPushButton("Confirm metadata")
+        banner_layout.addWidget(self.confirm_metadata_button)
+        self.metadata_banner.setVisible(False)
+        right_layout.addWidget(self.metadata_banner)
         plots_splitter = QSplitter(Qt.Orientation.Vertical)
         plots_splitter.addWidget(self.plot_panel)
         plots_splitter.addWidget(self.heatmap_panel)
@@ -119,6 +136,7 @@ class MainWindow(QMainWindow):
         )
 
         self.import_button.clicked.connect(self._on_import_requested)
+        self.confirm_metadata_button.clicked.connect(self._on_confirm_metadata)
         self.export_xlsx_button.clicked.connect(self._on_export_xlsx)
         self.export_hdf5_button.clicked.connect(self._on_export_hdf5)
         self.export_mzml_button.clicked.connect(self._on_export_mzml)
@@ -154,6 +172,7 @@ class MainWindow(QMainWindow):
             backend = SimulatedDAQBackend()
 
         self.store = DataStore(config)
+        self._update_metadata_banner()
         self.plot_panel.set_available_iterations(0)
         self.heatmap_panel.update_image(self.store.as_2d_array(), self.store.time_axis_ms)
         self.peak_table.set_peaks([])
@@ -179,18 +198,7 @@ class MainWindow(QMainWindow):
             return
         record = self.store.add_iteration(index, intensity)
         self._apply_processing_to_record(record)
-        peaks = pick_peaks(
-            self.store.time_axis_ms,
-            record.intensity,
-            drift_length_cm=self.store.config.drift_length_cm,
-            drift_voltage_v=self.store.config.drift_voltage_v,
-            pressure_torr=self.store.config.pressure_torr,
-            temperature_k=self.store.config.temperature_k,
-            gas_type=self.store.config.gas_type,
-            ion_mz=self.store.config.ion_mz,
-            ion_charge=self.store.config.ion_charge,
-            **self.control_panel.peak_detection_values(),
-        )
+        peaks = self._pick_peaks(record.intensity)
         record.peaks = [p.__dict__ for p in peaks]
 
         self.plot_panel.set_available_iterations(len(self.store))
@@ -251,14 +259,36 @@ class MainWindow(QMainWindow):
         record.intensity = intensity
         record.baseline = baseline
 
+    def _pick_peaks(self, intensity):
+        """Peak-pick with the GUI's current metadata/peak settings; K0/CCS are withheld while
+        the store's instrument metadata is unconfirmed (e.g. imported from a CSV)."""
+        return pick_peaks(
+            self.store.time_axis_ms,
+            intensity,
+            **self.control_panel.metadata_values(),
+            **self.control_panel.peak_detection_values(),
+            compute_mobility=self.store.metadata_confirmed,
+        )
+
+    def _update_metadata_banner(self) -> None:
+        unconfirmed = self.store is not None and not self.store.metadata_confirmed
+        self.metadata_banner.setVisible(unconfirmed)
+        self.peak_table.mobility_withheld = unconfirmed
+
+    def _on_confirm_metadata(self) -> None:
+        if self.store is None:
+            return
+        for key, value in self.control_panel.metadata_values().items():
+            setattr(self.store.config, key, value)
+        self.store.metadata_confirmed = True
+        self._update_metadata_banner()
+        self._recompute_all_peaks()
+
     def _recompute_all_peaks(self) -> None:
         if self.store is None or len(self.store) == 0:
             return
-        metadata = self.control_panel.metadata_values()
-        peak_params = self.control_panel.peak_detection_values()
         for record in self.store.iterations:
-            peaks = pick_peaks(self.store.time_axis_ms, record.intensity, **metadata, **peak_params)
-            record.peaks = [p.__dict__ for p in peaks]
+            record.peaks = [p.__dict__ for p in self._pick_peaks(record.intensity)]
         self._refresh_current_view(self.plot_panel.selected_iteration())
 
     def _on_system_parameters_requested(self) -> None:
@@ -414,12 +444,10 @@ class MainWindow(QMainWindow):
         self.store = store
         self.control_panel.apply_imported_config(store.config)
         self._restore_processing_settings(store)
-        metadata = self.control_panel.metadata_values()
-        peak_params = self.control_panel.peak_detection_values()
+        self._update_metadata_banner()
         for record in store.iterations:
             self._apply_processing_to_record(record)  # honor current positive-mode/baseline/normalize state
-            peaks = pick_peaks(store.time_axis_ms, record.intensity, **metadata, **peak_params)
-            record.peaks = [p.__dict__ for p in peaks]
+            record.peaks = [p.__dict__ for p in self._pick_peaks(record.intensity)]
 
         self.plot_panel.set_available_iterations(len(store))
         self.heatmap_panel.update_image(store.as_2d_array(), store.time_axis_ms)

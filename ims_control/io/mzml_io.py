@@ -43,6 +43,7 @@ def _write_settings_params(parent: Element, store: DataStore) -> None:
     one human-readable param per setting plus one JSON param used for lossless re-import."""
     config_dict = asdict(store.config)
     config_dict["created_at"] = str(config_dict["created_at"])
+    config_dict["metadata_confirmed"] = store.metadata_confirmed
     for key, value in config_dict.items():
         SubElement(parent, "userParam", {"name": f"metadata:{key}", "value": str(value)})
     for key, value, _ in store.processing.to_rows():
@@ -220,6 +221,8 @@ def import_mzml(path: str | Path) -> DataStore:
         processing = ProcessingSettings.from_dict(proc)
     store = DataStore(config)
     store.processing = processing
+    # Files without the settings record (or flagged unconfirmed) have placeholder metadata.
+    store.metadata_confirmed = settings is not None and bool(settings[0].get("metadata_confirmed", True))
     for index, values in intensities:
         raw = raw_by_index.get(index)
         store.add_iteration(index, np.array(values), None if raw is None else np.array(raw))

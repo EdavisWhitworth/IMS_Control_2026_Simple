@@ -107,6 +107,7 @@ def import_spectra_csv(path: str | Path) -> DataStore:
     exp_length_ms = dt_ms * num_points
     config = ExperimentConfig(exp_length_ms=exp_length_ms, num_points=num_points)
     store = DataStore(config)
+    store.metadata_confirmed = False  # CSV carries no instrument/ion metadata
     for col_idx, label in enumerate(iteration_labels):
         index = int(label.rsplit("_", 1)[-1])
         raw = None if raw_columns is None else raw_columns[:, col_idx]
@@ -128,7 +129,7 @@ def import_peaks_csv(store: DataStore, path: str | Path) -> None:
                 "fwhm_ms": float(row["fwhm_ms"]),
                 "resolving_power": float(row["resolving_power"]),
                 "snr": float(row["snr"]),
-                "k0": float(row["k0"]),
+                "k0": None if row["k0"] in ("", "None") else float(row["k0"]),
                 "ccs_a2": None if row["ccs_a2"] in ("", "None") else float(row["ccs_a2"]),
             }
             peaks_by_iteration.setdefault(iteration, []).append(peak)

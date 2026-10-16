@@ -25,6 +25,7 @@ class PeakTablePanel(QWidget):
         self.table.setHorizontalHeaderLabels([label for _, label in _COLUMNS])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.table)
+        self.mobility_withheld = False  # True: show "withheld" for missing K0/CCS (unconfirmed metadata)
 
     def set_peaks(self, peaks: list[PeakResult] | list[dict]) -> None:
         self.table.setRowCount(len(peaks))
@@ -32,5 +33,8 @@ class PeakTablePanel(QWidget):
             values = peak.__dict__ if hasattr(peak, "__dict__") else peak
             for col, (key, _label) in enumerate(_COLUMNS):
                 value = values.get(key)
-                text = "-" if value is None else f"{value:.4g}" if isinstance(value, float) else str(value)
+                if value is None and self.mobility_withheld and key in ("k0", "ccs_a2"):
+                    text = "withheld"
+                else:
+                    text = "-" if value is None else f"{value:.4g}" if isinstance(value, float) else str(value)
                 self.table.setItem(row, col, QTableWidgetItem(text))
