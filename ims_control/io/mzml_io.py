@@ -10,7 +10,9 @@ intensity into the intensity array slot.
 from __future__ import annotations
 
 import base64
+import json
 import struct
+from dataclasses import asdict, fields
 from pathlib import Path
 from xml.etree.ElementTree import Element, ElementTree, SubElement, parse
 
@@ -19,6 +21,7 @@ import numpy as np
 from ims_control.acquisition.experiment import ExperimentConfig
 from ims_control.io.variants import DEFAULT_EXPORT, split_variant, validate_export_data, variant_path
 from ims_control.models.data_store import DataStore
+from ims_control.processing.settings import ProcessingSettings
 
 _NO_COMPRESSION = ("MS:1000576", "no compression")
 _FLOAT64 = ("MS:1000523", "64-bit float")
@@ -33,6 +36,28 @@ def _cv_param(parent: Element, accession: str, name: str, value: str | None = No
     if value is not None:
         attrs["value"] = value
     SubElement(parent, "cvParam", attrs)
+
+
+def _write_settings_params(parent: Element, store: DataStore) -> None:
+    """Record instrument/ion metadata and processing/peak-detection settings as userParams:
+    one human-readable param per setting plus one JSON param used for lossless re-import."""
+    config_dict = asdict(store.config)
+    config_dict["created_at"] = str(config_dict["created_at"])
+    for key, value in config_dict.items():
+        SubElement(parent, "userParam", {"name": f"metadata:{key}", "value": str(value)})
+    for key, value, _ in store.processing.to_rows():
+        SubElement(parent, "userParam", {"name": f"processing:{key}", "value": str(value)})
+    payload = {"metadata": config_dict, "processing": store.processing.to_dict()}
+    SubElement(parent, "userParam", {"name": "ims_settings_json", "value": json.dumps(payload)})
+
+
+def _read_settings(path: Path) -> tuple[dict, dict] | None:
+    root = parse(path).getroot()
+    for el in root.iter():
+        if _local_tag(el) == "userParam" and el.get("name") == "ims_settings_json":
+            payload = json.loads(el.get("value", "{}"))
+            return payload.get("metadata", {}), payload.get("processing", {})
+    return None
 
 
 def _binary_data_array(parent: Element, values, array_type: tuple[str, str]) -> None:
@@ -73,6 +98,7 @@ def _write_mzml(store: DataStore, path: Path, variant: str) -> None:
     file_content = SubElement(file_desc, "fileContent")
     _cv_param(file_content, *_CENTROID)
     SubElement(file_content, "userParam", {"name": "ims_data_variant", "value": variant})
+    _write_settings_params(file_content, store)
 
     run = SubElement(mzml, "run", {"id": "ims_run"})
     spectrum_list = SubElement(run, "spectrumList", {"count": str(len(store.iterations))})
@@ -181,7 +207,19 @@ def import_mzml(path: str | Path) -> DataStore:
     dt_ms = float(time_ms[1] - time_ms[0]) if num_points > 1 else 1.0
     exp_length_ms = dt_ms * num_points
     config = ExperimentConfig(exp_length_ms=exp_length_ms, num_points=num_points)
+    processing = ProcessingSettings()
+    settings = _read_settings(path)
+    if settings is not None:
+        meta, proc = settings
+        known = {f.name for f in fields(ExperimentConfig)}
+        for key, value in meta.items():
+            if key in known and key != "created_at":
+                setattr(config, key, value)
+        config.num_points = num_points
+        config.exp_length_ms = exp_length_ms
+        processing = ProcessingSettings.from_dict(proc)
     store = DataStore(config)
+    store.processing = processing
     for index, values in intensities:
         raw = raw_by_index.get(index)
         store.add_iteration(index, np.array(values), None if raw is None else np.array(raw))

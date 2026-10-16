@@ -39,9 +39,14 @@ without an instrument connected.
 5. The peak table updates for whichever iteration is selected.
 6. Use the Export buttons to save the run as an Excel workbook (.xlsx), HDF5, or mzML. The drop-down
    beside them selects **raw + processed (default)**, raw only, or processed only. Raw = as acquired,
-   never modified. The Excel workbook has **Raw**, **Processed**, and **Peaks** sheets; HDF5 stores
+   never modified. The Excel workbook has **Raw**, **Processed**, **Peaks**, and **Settings** sheets; HDF5 stores
    labelled `raw_intensity` and `intensity` datasets in one file; mzML writes separate
-   `<name>_raw.mzML` and `<name>_processed.mzML` files (importing either restores both). To verify
+   `<name>_raw.mzML` and `<name>_processed.mzML` files (importing either restores both). Every export
+   also records the **instrument/ion metadata** and the **processing and peak-detection settings**
+   (positive mode, baseline subtraction + window, normalization + scale, peak min height/prominence,
+   noise window, software version): Excel `Settings` sheet, HDF5 `processing` / `instrument_metadata`
+   groups (plus `processing_json`), mzML `userParam`s. Importing restores them into the GUI. Tick
+   **Overlay raw** above the plot to compare the raw trace with the processed one. To verify
    original data is preserved through export/import, run
    `$env:PYTHONPATH='.'; .venv\Scripts\python.exe scripts\verify_raw_roundtrip.py`.
 7. Use **Import...** to load a previously saved Excel, HDF5, mzML (or legacy CSV) file for review —

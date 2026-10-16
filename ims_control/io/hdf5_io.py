@@ -12,6 +12,7 @@ import numpy as np
 from ims_control.acquisition.experiment import ExperimentConfig
 from ims_control.io.variants import DEFAULT_EXPORT, validate_export_data
 from ims_control.models.data_store import DataStore, IterationRecord
+from ims_control.processing.settings import ProcessingSettings
 
 
 def export_hdf5(store: DataStore, path: str | Path, data: str = DEFAULT_EXPORT) -> None:
@@ -25,6 +26,19 @@ def export_hdf5(store: DataStore, path: str | Path, data: str = DEFAULT_EXPORT) 
         config_dict = asdict(store.config)
         config_dict["created_at"] = str(config_dict["created_at"])
         f.attrs["config_json"] = json.dumps(config_dict)
+
+        # Full processing + peak-detection provenance (also readable as plain attrs in any HDF5 viewer).
+        f.attrs["processing_json"] = json.dumps(store.processing.to_dict())
+        proc_group = f.create_group("processing")
+        for key, value in store.processing.to_dict().items():
+            if value is None:
+                value = "auto"
+            elif isinstance(value, list):
+                value = "; ".join(value)
+            proc_group.attrs[key] = value
+        meta_group = f.create_group("instrument_metadata")
+        for key, value in config_dict.items():
+            meta_group.attrs[key] = str(value) if isinstance(value, (list, dict)) else value
 
         f.create_dataset("time_axis_ms", data=store.time_axis_ms)
         f.attrs["exported_data"] = ",".join(variants)
@@ -49,6 +63,8 @@ def import_hdf5(path: str | Path) -> DataStore:
         config = ExperimentConfig(**config_dict)
 
         store = DataStore(config)
+        if "processing_json" in f.attrs:
+            store.processing = ProcessingSettings.from_dict(json.loads(f.attrs["processing_json"]))
         processed = np.asarray(f["intensity"]) if "intensity" in f else None
         raw = np.asarray(f["raw_intensity"]) if "raw_intensity" in f else None
         if processed is None and raw is None:
