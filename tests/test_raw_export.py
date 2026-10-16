@@ -20,9 +20,12 @@ def _processed_store():
     return store
 
 
-def _assert_raw_and_processed_preserved(loaded, store):
+def _assert_raw_and_processed_preserved(loaded, store, exact=True):
     for a, b in zip(loaded.iterations, store.iterations):
-        np.testing.assert_array_equal(a.raw_intensity, b.raw_intensity)
+        if exact:
+            np.testing.assert_array_equal(a.raw_intensity, b.raw_intensity)
+        else:  # Excel stores ~15 significant digits
+            np.testing.assert_allclose(a.raw_intensity, b.raw_intensity, rtol=1e-14, atol=0)
         np.testing.assert_allclose(a.intensity, b.intensity)
     assert not np.allclose(loaded.iterations[0].raw_intensity, loaded.iterations[0].intensity)
 
@@ -73,6 +76,41 @@ def test_csv_and_mzml_selection_writes_only_selected(tmp_path):
     assert [p.name for p in export_spectra_csv(store, tmp_path / "a.csv", data="raw")] == ["a_raw.csv"]
     assert [p.name for p in export_mzml(store, tmp_path / "a.mzml", data="processed")] == ["a_processed.mzml"]
     assert not (tmp_path / "a_processed.csv").exists()
+
+
+def test_xlsx_workbook_has_raw_processed_peaks_and_round_trips(tmp_path):
+    from openpyxl import load_workbook
+
+    from ims_control.io.xlsx_io import export_xlsx, import_xlsx
+
+    store = _processed_store()
+    store.iterations[0].peaks = [
+        {"index": 5, "time_ms": 1.0, "height": 2.0, "fwhm_ms": 0.1, "resolving_power": 10.0,
+         "snr": 30.0, "k0": 1.5, "ccs_a2": None}
+    ]
+    path = export_xlsx(store, tmp_path / "run.xlsx")
+    wb = load_workbook(path)
+    assert wb.sheetnames == ["Raw", "Processed", "Peaks"]
+    wb.close()
+
+    loaded = import_xlsx(path)
+    _assert_raw_and_processed_preserved(loaded, store, exact=False)
+    assert loaded.iterations[0].peaks[0]["ccs_a2"] is None
+    assert loaded.iterations[1].peaks == []
+
+
+def test_xlsx_selection(tmp_path):
+    from openpyxl import load_workbook
+
+    from ims_control.io.xlsx_io import export_xlsx, import_xlsx
+
+    store = _processed_store()
+    export_xlsx(store, tmp_path / "r.xlsx", data="raw")
+    assert load_workbook(tmp_path / "r.xlsx").sheetnames == ["Raw", "Peaks"]
+    loaded = import_xlsx(tmp_path / "r.xlsx")
+    np.testing.assert_allclose(
+        loaded.iterations[0].raw_intensity, store.iterations[0].raw_intensity, rtol=1e-14, atol=0
+    )
 
 
 def test_invalid_selection_rejected(tmp_path):

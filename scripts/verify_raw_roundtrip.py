@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from ims_control.acquisition.experiment import ExperimentConfig
-from ims_control.io.csv_io import export_spectra_csv, import_spectra_csv
+from ims_control.io.xlsx_io import export_xlsx, import_xlsx
 from ims_control.io.hdf5_io import export_hdf5, import_hdf5
 from ims_control.io.mzml_io import export_mzml, import_mzml
 from ims_control.models.data_store import DataStore
@@ -33,9 +33,12 @@ def build_store() -> DataStore:
     return store
 
 
-def check(label: str, loaded: DataStore, original: DataStore) -> bool:
+def check(label: str, loaded: DataStore, original: DataStore, exact: bool = True) -> bool:
+    # Excel stores ~15 significant digits, so XLSX is compared to 1e-14 relative, not bit-for-bit.
     raw_ok = all(
         np.array_equal(a.raw_intensity, b.raw_intensity)
+        if exact
+        else np.allclose(a.raw_intensity, b.raw_intensity, rtol=1e-14, atol=0)
         for a, b in zip(loaded.iterations, original.iterations)
     )
     processed_distinct = not np.allclose(loaded.iterations[0].raw_intensity, loaded.iterations[0].intensity)
@@ -48,12 +51,12 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         export_hdf5(original, tmp_path / "run.h5")
-        export_spectra_csv(original, tmp_path / "run.csv")
+        export_xlsx(original, tmp_path / "run.xlsx")
         export_mzml(original, tmp_path / "run.mzml")
         print("Files written:", ", ".join(sorted(p.name for p in tmp_path.iterdir())))
         results = [
             check("HDF5", import_hdf5(tmp_path / "run.h5"), original),
-            check("CSV", import_spectra_csv(tmp_path / "run_processed.csv"), original),
+            check("XLSX", import_xlsx(tmp_path / "run.xlsx"), original, exact=False),
             check("mzML", import_mzml(tmp_path / "run_processed.mzml"), original),
         ]
     print("ALL CHECKS PASSED" if all(results) else "CHECK FAILED")
