@@ -1,4 +1,7 @@
-"""Excel (.xlsx) export/import: one workbook with Raw, Processed, and Peaks sheets.
+"""Excel (.xlsx) export/import: one workbook with Raw, Processed, Peaks, and Settings sheets.
+
+The Settings sheet records the full instrument/ion metadata and the processing and
+peak-detection parameters, so one file is a self-describing record of the run.
 
 .xlsx is used rather than legacy .xls, which is limited to 256 columns (one column per
 iteration here) and 65,536 rows.
@@ -6,6 +9,7 @@ iteration here) and 65,536 rows.
 
 from __future__ import annotations
 
+from dataclasses import asdict, fields
 from pathlib import Path
 
 import numpy as np
@@ -14,10 +18,12 @@ from openpyxl import Workbook, load_workbook
 from ims_control.acquisition.experiment import ExperimentConfig
 from ims_control.io.variants import DEFAULT_EXPORT, validate_export_data
 from ims_control.models.data_store import DataStore
+from ims_control.processing.settings import ProcessingSettings
 
 RAW_SHEET = "Raw"
 PROCESSED_SHEET = "Processed"
 PEAKS_SHEET = "Peaks"
+SETTINGS_SHEET = "Settings"
 PEAK_FIELDS = ["iteration", "index", "time_ms", "height", "fwhm_ms", "resolving_power", "snr", "k0", "ccs_a2"]
 
 
@@ -43,6 +49,15 @@ def export_xlsx(store: DataStore, path: str | Path, data: str = DEFAULT_EXPORT) 
     for rec in store.iterations:
         for peak in rec.peaks:
             ws.append([rec.index] + [peak.get(k) for k in PEAK_FIELDS[1:]])
+
+    # Provenance: instrument/ion metadata and processing/peak-detection settings.
+    ws = wb.create_sheet(SETTINGS_SHEET)
+    ws.append(["section", "parameter", "value", "description"])
+    for key, value in asdict(store.config).items():
+        ws.append(["instrument_ion_metadata", key, str(value) if key == "created_at" else value, ""])
+    for key, value, description in store.processing.to_rows():
+        ws.append(["processing_and_peak_detection", key, value, description])
+    ws.append(["export", "exported_data", ",".join(variants), "which spectra sheets are present"])
 
     path = Path(path)
     wb.save(path)
@@ -76,7 +91,26 @@ def import_xlsx(path: str | Path) -> DataStore:
     num_points = len(time_ms)
     # exp_length_ms from sample spacing x count, matching DataStore.time_axis_ms (see csv_io).
     dt_ms = float(time_ms[1] - time_ms[0]) if num_points > 1 else 1.0
-    store = DataStore(ExperimentConfig(exp_length_ms=dt_ms * num_points, num_points=num_points))
+    config = ExperimentConfig(exp_length_ms=dt_ms * num_points, num_points=num_points)
+    processing = ProcessingSettings()
+    if SETTINGS_SHEET in wb.sheetnames:
+        meta, proc_rows = {}, {}
+        for row in list(wb[SETTINGS_SHEET].iter_rows(values_only=True))[1:]:
+            if row[0] == "instrument_ion_metadata":
+                meta[row[1]] = row[2]
+            elif row[0] == "processing_and_peak_detection":
+                proc_rows[row[1]] = row[2]
+        known = {f.name: f for f in fields(ExperimentConfig)}
+        for key, value in meta.items():
+            if key in known and key != "created_at" and value is not None:
+                kind = type(getattr(config, key))
+                setattr(config, key, kind(value) if kind is not bool else bool(value))
+        # The time axis is authoritative for timing, whatever the sheet says.
+        config.num_points = num_points
+        config.exp_length_ms = dt_ms * num_points
+        processing = ProcessingSettings.from_rows(proc_rows)
+    store = DataStore(config)
+    store.processing = processing
     for col, label in enumerate(labels):
         store.add_iteration(
             int(label.rsplit("_", 1)[-1]), proc[:, col], None if raw is None else raw[:, col]

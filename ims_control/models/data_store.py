@@ -8,6 +8,7 @@ from datetime import datetime
 import numpy as np
 
 from ims_control.acquisition.experiment import ExperimentConfig
+from ims_control.processing.settings import ProcessingSettings
 
 
 @dataclass
@@ -39,6 +40,8 @@ class DataStore:
     def __init__(self, config: ExperimentConfig) -> None:
         self.config = config
         self.iterations: list[IterationRecord] = []
+        # Settings that produced `intensity`/peaks; kept current by MainWindow, written by exporters.
+        self.processing = ProcessingSettings()
 
     @property
     def time_axis_ms(self) -> np.ndarray:

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ims_control.acquisition.experiment import ExperimentConfig, SystemParameters
+from ims_control.processing.settings import ProcessingSettings
 
 
 class ControlPanel(QWidget):
@@ -347,6 +348,41 @@ class ControlPanel(QWidget):
             "ion_mz": self.ion_mz_spin.value(),
             "ion_charge": self.ion_charge_spin.value(),
         }
+
+    def processing_settings(self) -> ProcessingSettings:
+        """Snapshot of the processing and peak-detection widgets (None = Auto)."""
+        peak = self.peak_detection_values()
+        return ProcessingSettings(
+            positive_mode=self.is_positive_mode(),
+            subtract_baseline=self.is_baseline_subtracted(),
+            baseline_window_ms=self.baseline_window_ms(),
+            normalize=self.is_normalized(),
+            normalize_scale=self.normalize_scale(),
+            peak_min_height=peak["height"],
+            peak_min_prominence=peak["prominence"],
+        )
+
+    def apply_processing_settings(self, settings: ProcessingSettings) -> None:
+        """Set the processing/peak widgets from an imported record without emitting change
+        signals (the caller re-derives intensity and peaks itself)."""
+        widgets = (
+            self.positive_mode_checkbox, self.subtract_baseline_checkbox, self.baseline_window_spin,
+            self.normalize_checkbox, self.normalize_scale_combo, self.peak_height_spin,
+            self.peak_prominence_spin,
+        )
+        for w in widgets:
+            w.blockSignals(True)
+        self.positive_mode_checkbox.setChecked(settings.positive_mode)
+        self.subtract_baseline_checkbox.setChecked(settings.subtract_baseline)
+        self.baseline_window_spin.setValue(settings.baseline_window_ms)
+        self.normalize_checkbox.setChecked(settings.normalize)
+        idx = self.normalize_scale_combo.findText(settings.normalize_scale)
+        if idx >= 0:
+            self.normalize_scale_combo.setCurrentIndex(idx)
+        self.peak_height_spin.setValue(settings.peak_min_height or 0.0)
+        self.peak_prominence_spin.setValue(settings.peak_min_prominence or 0.0)
+        for w in widgets:
+            w.blockSignals(False)
 
     def peak_detection_values(self) -> dict:
         """Min height/prominence for find_peaks; 0.0 (the special "Auto" value) means None,

@@ -34,8 +34,16 @@ ims_control/
     baseline.py                  noise-window mean/std (SNR denominator) + estimate_baseline() (rolling
                                    min/mean envelope) used for the optional baseline-subtraction feature
     peak_picking.py               scipy find_peaks/peak_widths wrapper; computes FWHM, resolving power, SNR, K0, CCS
+    settings.py                   ProcessingSettings: provenance record of processing + peak-detection params.
+                                   `DataStore.processing` is snapshotted from the GUI by
+                                   `MainWindow._sync_processing_settings()` before every export; exporters write it
+                                   with the full ExperimentConfig, importers restore it (legacy files -> defaults).
+                                   If a processed-only file records processing ops, they are NOT re-applied to the GUI
+                                   (would double-process). When adding a processing option, add it to
+                                   ProcessingSettings, ControlPanel.processing_settings()/apply_processing_settings().
   io/
-    xlsx_io.py                   Excel export/import: one .xlsx workbook with Raw, Processed, Peaks sheets
+    xlsx_io.py                   Excel export/import: one .xlsx workbook with Raw, Processed, Peaks, Settings sheets
+                                   (Settings = instrument/ion metadata + processing/peak-detection settings)
                                    (.xlsx not .xls: .xls caps at 256 columns = iterations). This replaced the
                                    CSV export in the GUI; csv_io.py is kept for legacy CSV import.
     csv_io.py / hdf5_io.py / mzml_io.py   export and import of a DataStore, in each of the formats.

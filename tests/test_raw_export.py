@@ -90,7 +90,7 @@ def test_xlsx_workbook_has_raw_processed_peaks_and_round_trips(tmp_path):
     ]
     path = export_xlsx(store, tmp_path / "run.xlsx")
     wb = load_workbook(path)
-    assert wb.sheetnames == ["Raw", "Processed", "Peaks"]
+    assert wb.sheetnames == ["Raw", "Processed", "Peaks", "Settings"]
     wb.close()
 
     loaded = import_xlsx(path)
@@ -106,7 +106,7 @@ def test_xlsx_selection(tmp_path):
 
     store = _processed_store()
     export_xlsx(store, tmp_path / "r.xlsx", data="raw")
-    assert load_workbook(tmp_path / "r.xlsx").sheetnames == ["Raw", "Peaks"]
+    assert load_workbook(tmp_path / "r.xlsx").sheetnames == ["Raw", "Peaks", "Settings"]
     loaded = import_xlsx(tmp_path / "r.xlsx")
     np.testing.assert_allclose(
         loaded.iterations[0].raw_intensity, store.iterations[0].raw_intensity, rtol=1e-14, atol=0

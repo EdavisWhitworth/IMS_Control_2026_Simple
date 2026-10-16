@@ -33,8 +33,9 @@ from ims_control.io.hdf5_io import export_hdf5, import_hdf5
 from ims_control.io.mzml_io import export_mzml, import_mzml
 from ims_control.io.settings_io import load_defaults, save_defaults
 from ims_control.models.data_store import DataStore, IterationRecord
-from ims_control.processing.baseline import estimate_baseline
+from ims_control.processing.baseline import default_noise_window, estimate_baseline
 from ims_control.processing.peak_picking import pick_peaks
+from ims_control.processing.settings import ProcessingSettings
 
 
 class MainWindow(QMainWindow):
@@ -113,6 +114,9 @@ class MainWindow(QMainWindow):
         self.control_panel.metadata_changed.connect(self._on_metadata_changed)
         self.control_panel.spectrum_processing_changed.connect(self._on_spectrum_processing_changed)
         self.plot_panel.iteration_selection_changed.connect(self._refresh_current_view)
+        self.plot_panel.raw_overlay_toggled.connect(
+            lambda: self._refresh_current_view(self.plot_panel.selected_iteration())
+        )
 
         self.import_button.clicked.connect(self._on_import_requested)
         self.export_xlsx_button.clicked.connect(self._on_export_xlsx)
@@ -193,6 +197,7 @@ class MainWindow(QMainWindow):
         self.heatmap_panel.update_image(self.store.as_2d_array(), self.store.time_axis_ms)
         if self.plot_panel.selected_iteration() == self.plot_panel.CURRENT_SENTINEL:
             self.plot_panel.update_curve(self.store.time_axis_ms, record.intensity)
+            self.plot_panel.update_raw(self.store.time_axis_ms, record.raw_intensity)
             self.plot_panel.update_baseline(self.store.time_axis_ms, record.baseline)
             self.plot_panel.update_peaks(peaks)
             self.peak_table.set_peaks(peaks)
@@ -366,6 +371,7 @@ class MainWindow(QMainWindow):
             iteration_index = len(self.store) - 1
         record = self.store.get_iteration(iteration_index)
         self.plot_panel.update_curve(self.store.time_axis_ms, record.intensity)
+        self.plot_panel.update_raw(self.store.time_axis_ms, record.raw_intensity)
         self.plot_panel.update_baseline(self.store.time_axis_ms, record.baseline)
         self.plot_panel.update_peaks(record.peaks)
         self.peak_table.set_peaks(record.peaks)
@@ -404,6 +410,7 @@ class MainWindow(QMainWindow):
 
         self.store = store
         self.control_panel.apply_imported_config(store.config)
+        self._restore_processing_settings(store)
         metadata = self.control_panel.metadata_values()
         peak_params = self.control_panel.peak_detection_values()
         for record in store.iterations:
@@ -414,6 +421,28 @@ class MainWindow(QMainWindow):
         self.plot_panel.set_available_iterations(len(store))
         self.heatmap_panel.update_image(store.as_2d_array(), store.time_axis_ms)
         self._refresh_current_view(self.plot_panel.selected_iteration())
+
+    def _restore_processing_settings(self, store: DataStore) -> None:
+        """Apply the settings recorded in an imported file to the GUI. If the file recorded
+        processing steps but holds no separate raw data (processed-only file), the processing
+        toggles are NOT re-applied -- that would process already-processed data twice."""
+        settings = store.processing
+        processed_only = bool(store.iterations) and all(
+            np.array_equal(r.raw_intensity, r.intensity) for r in store.iterations
+        )
+        has_ops = settings.positive_mode or settings.subtract_baseline or settings.normalize
+        if processed_only and has_ops:
+            settings = ProcessingSettings(
+                peak_min_height=settings.peak_min_height,
+                peak_min_prominence=settings.peak_min_prominence,
+            )
+            QMessageBox.information(
+                self,
+                "Processed data only",
+                "This file records processing steps but contains no raw data, so they were not "
+                "re-applied (the spectra are already processed).",
+            )
+        self.control_panel.apply_processing_settings(settings)
 
     def _on_export_xlsx(self) -> None:
         if not self._require_data():
@@ -453,4 +482,13 @@ class MainWindow(QMainWindow):
         if self.store is None or len(self.store) == 0:
             QMessageBox.information(self, "No data", "Run an experiment before exporting.")
             return False
+        self._sync_processing_settings()
         return True
+
+    def _sync_processing_settings(self) -> None:
+        """Snapshot the GUI's processing/peak-detection state onto the store so exporters record it."""
+        settings = self.control_panel.processing_settings()
+        settings.noise_window_start_ms, settings.noise_window_end_ms = default_noise_window(
+            self.store.time_axis_ms
+        )
+        self.store.processing = settings
