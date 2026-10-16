@@ -3,5 +3,6 @@ pyqtgraph>=0.13
 numpy>=1.26
 scipy>=1.11
 h5py>=3.10
+openpyxl>=3.1
 nidaqmx>=0.9
 pytest>=7.4

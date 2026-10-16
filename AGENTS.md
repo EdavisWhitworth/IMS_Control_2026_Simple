@@ -35,7 +35,15 @@ ims_control/
                                    min/mean envelope) used for the optional baseline-subtraction feature
     peak_picking.py               scipy find_peaks/peak_widths wrapper; computes FWHM, resolving power, SNR, K0, CCS
   io/
-    csv_io.py / hdf5_io.py / mzml_io.py   export and import of a DataStore, in each of the three formats
+    xlsx_io.py                   Excel export/import: one .xlsx workbook with Raw, Processed, Peaks sheets
+                                   (.xlsx not .xls: .xls caps at 256 columns = iterations). This replaced the
+                                   CSV export in the GUI; csv_io.py is kept for legacy CSV import.
+    csv_io.py / hdf5_io.py / mzml_io.py   export and import of a DataStore, in each of the formats.
+                                   Exports default to BOTH raw (`raw_intensity`) and processed (`intensity`)
+                                   data (`data="both"|"raw"|"processed"`; variants.py has the naming helpers:
+                                   HDF5 = two labelled datasets, CSV/mzML = `_raw`/`_processed` file pairs).
+                                   Importing restores raw_intensity from the pair so raw is never replaced
+                                   by processed data. Always keep this default of "both".
     settings_io.py                save/load operator defaults (ExperimentConfig + SystemParameters +
                                    simulator flag + kV setpoints) as JSON at ~/.ims_control/defaults.json
   gui/
@@ -51,7 +59,7 @@ ims_control/
     heatmap_panel.py               2D colormap of all iterations (ImageItem + HistogramLUTItem, "spectrum" preset)
     peak_table.py                  table of picked-peak parameters for the selected iteration
     main_window.py                 wires everything together; owns the DataStore, AcquisitionWorker, and
-                                    PowerSupplyBackend; "Import..." button loads a CSV/HDF5/mzML file into
+                                    PowerSupplyBackend; "Import..." button loads a CSV/HDF5/mzML/xlsx file into
                                     a fresh DataStore, replacing the current run's in-memory data
 tests/                           pytest suite — uses SimulatedDAQBackend exclusively (no hardware needed)
 ```
@@ -144,7 +152,8 @@ tests/                           pytest suite — uses SimulatedDAQBackend exclu
   is. Live iterations get the same pipeline applied once in `_on_iteration_ready` via
   `_apply_processing_to_record`. Peaks are always recomputed after any pipeline change via
   `_recompute_all_peaks`, working identically during a live run, after Stop, or after Import.
-  Exports (CSV/HDF5/mzML) always reflect the processed `intensity`, not `raw_intensity`.
+  Exports write raw (`raw_intensity`) and processed (`intensity`) data, both by default, each
+  clearly labelled; the operator may choose raw-only or processed-only.
 - **DAQ channel names are always user-configurable** (GUI text fields in `ControlPanel`),
   never hardcoded constants — different instruments/rewiring should not require code changes.
 - **Power supplies (IMS cell / Ionization)**: `ims_control/daq/power_supply.py` defines
@@ -194,7 +203,7 @@ extending simulator-based tests over ones that assume real hardware is present.
    `pick_peaks` or as a standalone function it calls).
 2. Add the field to `PeakResult`.
 3. Add a column to `_COLUMNS` in `ims_control/gui/peak_table.py`.
-4. Add the field name to `fieldnames` in `ims_control/io/csv_io.py::export_peaks_csv`.
+4. Add the field name to `PEAK_FIELDS` in `ims_control/io/xlsx_io.py` (and `fieldnames` in `csv_io.py::export_peaks_csv`).
 5. Add/extend a unit test in `tests/test_peak_picking.py` with a known expected value.
 
 ## Running tests

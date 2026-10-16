@@ -6,6 +6,7 @@ from ims_control.io.csv_io import (
     export_spectra_csv,
     import_peaks_csv,
     import_spectra_csv,
+    peaks_csv_path,
 )
 from ims_control.io.hdf5_io import export_hdf5, import_hdf5
 from ims_control.io.mzml_io import export_mzml, import_mzml
@@ -37,22 +38,22 @@ def test_csv_export_round_trip(tmp_path):
     store = _make_store()
     spectra_path = tmp_path / "spectra.csv"
     peaks_path = tmp_path / "peaks.csv"
-    export_spectra_csv(store, spectra_path)
+    written = export_spectra_csv(store, spectra_path)
     export_peaks_csv(store, peaks_path)
-    assert spectra_path.exists()
+    assert [p.name for p in written] == ["spectra_raw.csv", "spectra_processed.csv"]
     assert peaks_path.exists()
-    assert "iteration_0" in spectra_path.read_text()
+    assert "iteration_0" in (tmp_path / "spectra_processed.csv").read_text()
 
 
 def test_csv_import_round_trip(tmp_path):
     store = _make_store()
     spectra_path = tmp_path / "spectra.csv"
-    peaks_path = tmp_path / "peaks.csv"
+    peaks_path = tmp_path / "spectra_peaks.csv"
     export_spectra_csv(store, spectra_path)
     export_peaks_csv(store, peaks_path)
 
-    loaded = import_spectra_csv(spectra_path)
-    import_peaks_csv(loaded, peaks_path)
+    loaded = import_spectra_csv(tmp_path / "spectra_processed.csv")
+    import_peaks_csv(loaded, peaks_csv_path(tmp_path / "spectra_processed.csv"))
 
     assert len(loaded) == len(store)
     np.testing.assert_allclose(loaded.as_2d_array(), store.as_2d_array())
@@ -76,9 +77,10 @@ def test_mzml_export_creates_valid_xml(tmp_path):
     store = _make_store()
     path = tmp_path / "run.mzml"
     export_mzml(store, path)
-    content = path.read_text(encoding="utf-8")
+    content = (tmp_path / "run_processed.mzml").read_text(encoding="utf-8")
     assert "<mzML" in content
     assert content.count("<spectrum ") == 2
+    assert (tmp_path / "run_raw.mzml").exists()
 
 
 def test_mzml_import_round_trip(tmp_path):
@@ -86,7 +88,7 @@ def test_mzml_import_round_trip(tmp_path):
     path = tmp_path / "run.mzml"
     export_mzml(store, path)
 
-    loaded = import_mzml(path)
+    loaded = import_mzml(tmp_path / "run_processed.mzml")
 
     assert len(loaded) == len(store)
     np.testing.assert_allclose(loaded.as_2d_array(), store.as_2d_array())

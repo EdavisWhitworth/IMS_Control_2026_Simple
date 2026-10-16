@@ -44,8 +44,14 @@ class DataStore:
     def time_axis_ms(self) -> np.ndarray:
         return np.arange(self.config.num_points) / self.config.sample_rate_hz * 1000.0
 
-    def add_iteration(self, index: int, intensity: np.ndarray) -> IterationRecord:
-        record = IterationRecord(index=index, intensity=np.array(intensity, copy=True))
+    def add_iteration(
+        self, index: int, intensity: np.ndarray, raw_intensity: np.ndarray | None = None
+    ) -> IterationRecord:
+        record = IterationRecord(
+            index=index,
+            intensity=np.array(intensity, copy=True),
+            raw_intensity=None if raw_intensity is None else np.array(raw_intensity, copy=True),
+        )
         self.iterations.append(record)
         return record
 
@@ -57,6 +63,12 @@ class DataStore:
         if not self.iterations:
             return np.zeros((0, self.config.num_points))
         return np.vstack([rec.intensity for rec in self.iterations])
+
+    def as_2d_raw_array(self) -> np.ndarray:
+        """Return shape (n_iterations, num_points) matrix of the pristine raw intensities."""
+        if not self.iterations:
+            return np.zeros((0, self.config.num_points))
+        return np.vstack([rec.raw_intensity for rec in self.iterations])
 
     def set_peaks(self, index: int, peaks: list[dict]) -> None:
         self.iterations[index].peaks = peaks
