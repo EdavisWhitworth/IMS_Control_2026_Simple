@@ -45,8 +45,9 @@ without an instrument connected.
    also records the **instrument/ion metadata** and the **processing and peak-detection settings**
    (positive mode, baseline subtraction + window, normalization + scale, peak min height/prominence,
    noise window, software version): Excel `Settings` sheet, HDF5 `processing` / `instrument_metadata`
-   groups (plus `processing_json`), mzML `userParam`s. Importing restores them into the GUI. Tick
-   **Overlay raw** above the plot to compare the raw trace with the processed one. To verify
+   groups (plus `processing_json`), mzML `userParam`s. Importing restores them into the GUI. In
+      **Spectrum Processing**, the *Overlay raw when baseline subtracted* and *Overlay raw when normalized*
+      checkboxes (both off by default) draw the raw trace as a gray dashed line. To verify
    original data is preserved through export/import, run
    `$env:PYTHONPATH='.'; .venv\Scripts\python.exe scripts\verify_raw_roundtrip.py`.
 7. Use **Import...** to load a previously saved Excel, HDF5, mzML (or legacy CSV) file for review —

@@ -33,6 +33,7 @@ class ControlPanel(QWidget):
     save_defaults_requested = Signal()
     metadata_changed = Signal()
     spectrum_processing_changed = Signal()  # positive mode, baseline subtraction, normalization
+    raw_overlay_changed = Signal()  # either "overlay raw" checkbox toggled
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -174,6 +175,11 @@ class ControlPanel(QWidget):
         processing_form = QFormLayout(processing_box)
         self.subtract_baseline_checkbox = QCheckBox("Subtract Baseline")
         processing_form.addRow(self.subtract_baseline_checkbox)
+        self.baseline_raw_overlay_checkbox = QCheckBox("Overlay raw when baseline subtracted")
+        self.baseline_raw_overlay_checkbox.setToolTip(
+            "Draw the as-acquired raw trace (gray, dashed) while baseline subtraction is on."
+        )
+        processing_form.addRow(self.baseline_raw_overlay_checkbox)
 
         self.baseline_window_spin = QDoubleSpinBox()
         self.baseline_window_spin.setRange(0.05, 50.0)
@@ -184,6 +190,12 @@ class ControlPanel(QWidget):
 
         self.normalize_checkbox = QCheckBox("Normalize")
         processing_form.addRow(self.normalize_checkbox)
+        self.normalize_raw_overlay_checkbox = QCheckBox("Overlay raw when normalized")
+        self.normalize_raw_overlay_checkbox.setToolTip(
+            "Draw the as-acquired raw trace (gray, dashed) while normalization is on. Raw keeps its "
+            "original units, so it will not share the 0-1 / 0-100% scale of the normalized trace."
+        )
+        processing_form.addRow(self.normalize_raw_overlay_checkbox)
 
         self.normalize_scale_combo = QComboBox()
         self.normalize_scale_combo.addItems(["0-1", "0-100%"])
@@ -223,6 +235,8 @@ class ControlPanel(QWidget):
         self.normalize_scale_combo.currentTextChanged.connect(
             lambda _text: self.spectrum_processing_changed.emit()
         )
+        self.baseline_raw_overlay_checkbox.toggled.connect(lambda _c: self.raw_overlay_changed.emit())
+        self.normalize_raw_overlay_checkbox.toggled.connect(lambda _c: self.raw_overlay_changed.emit())
         self.drift_length_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
         self.drift_voltage_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
         self.pressure_spin.valueChanged.connect(lambda _value: self.metadata_changed.emit())
@@ -330,6 +344,12 @@ class ControlPanel(QWidget):
 
     def is_normalized(self) -> bool:
         return self.normalize_checkbox.isChecked()
+
+    def show_raw_overlay(self) -> bool:
+        """True when raw should be drawn: an active processing step has its overlay box ticked."""
+        return (self.is_baseline_subtracted() and self.baseline_raw_overlay_checkbox.isChecked()) or (
+            self.is_normalized() and self.normalize_raw_overlay_checkbox.isChecked()
+        )
 
     def normalize_scale(self) -> str:
         return self.normalize_scale_combo.currentText()
