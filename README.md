@@ -41,7 +41,8 @@ without an instrument connected.
    beside them selects **raw + processed (default)**, raw only, or processed only. Raw = as acquired,
    never modified. The Excel workbook has **Raw**, **Processed**, **Peaks**, and **Settings** sheets; HDF5 stores
    labelled `raw_intensity` and `intensity` datasets in one file; mzML writes separate
-   `<name>_raw.mzML` and `<name>_processed.mzML` files (importing either restores both). Every export
+   `<name>_raw.mzML` and `<name>_processed.mzML` files (importing either restores both); mzML spectra are
+   labelled *profile* with drift time (ms) in the standard time array, not m/z. Every export
    also records the **instrument/ion metadata** and the **processing and peak-detection settings**
    (positive mode, baseline subtraction + window, normalization + scale, peak min height/prominence,
    noise window, software version): Excel `Settings` sheet, HDF5 `processing` / `instrument_metadata`
