@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
@@ -26,7 +27,13 @@ from ims_control.gui.heatmap_panel import HeatmapPanel
 from ims_control.gui.peak_table import PeakTablePanel
 from ims_control.gui.plot_panel import PlotPanel
 from ims_control.gui.system_parameters_dialog import SystemParametersDialog
-from ims_control.io.csv_io import export_peaks_csv, export_spectra_csv, import_peaks_csv, import_spectra_csv
+from ims_control.io.csv_io import (
+    export_peaks_csv,
+    export_spectra_csv,
+    import_peaks_csv,
+    import_spectra_csv,
+    peaks_csv_path,
+)
 from ims_control.io.hdf5_io import export_hdf5, import_hdf5
 from ims_control.io.mzml_io import export_mzml, import_mzml
 from ims_control.io.settings_io import load_defaults, save_defaults
@@ -59,6 +66,15 @@ class MainWindow(QMainWindow):
 
     def _build_layout(self) -> None:
         export_row = QHBoxLayout()
+        self.export_data_combo = QComboBox()
+        self.export_data_combo.addItem("Export: raw + processed", "both")
+        self.export_data_combo.addItem("Export: raw only", "raw")
+        self.export_data_combo.addItem("Export: processed only", "processed")
+        self.export_data_combo.setToolTip(
+            "Which spectra to export. Raw = as acquired (never modified); processed = after "
+            "positive mode / baseline subtraction / normalization. Default: both."
+        )
+        export_row.addWidget(self.export_data_combo)
         self.import_button = QPushButton("Import...")
         self.export_csv_button = QPushButton("Export CSV")
         self.export_hdf5_button = QPushButton("Export HDF5")
@@ -377,7 +393,7 @@ class MainWindow(QMainWindow):
                 store = import_hdf5(path)
             elif suffix == ".csv":
                 store = import_spectra_csv(path)
-                peaks_path = Path(path).with_name(Path(path).stem + "_peaks.csv")
+                peaks_path = peaks_csv_path(path)
                 if peaks_path.exists():
                     import_peaks_csv(store, peaks_path)
             elif suffix == ".mzml":
@@ -408,23 +424,34 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export spectra CSV", filter="CSV (*.csv)")
         if not path:
             return
-        export_spectra_csv(self.store, path)
-        peaks_path = path.rsplit(".", 1)[0] + "_peaks.csv"
+        written = export_spectra_csv(self.store, path, self.export_data_choice())
+        peaks_path = peaks_csv_path(path)
         export_peaks_csv(self.store, peaks_path)
+        self._report_export([*written, peaks_path])
 
     def _on_export_hdf5(self) -> None:
         if not self._require_data():
             return
         path, _ = QFileDialog.getSaveFileName(self, "Export HDF5", filter="HDF5 (*.h5)")
         if path:
-            export_hdf5(self.store, path)
+            export_hdf5(self.store, path, self.export_data_choice())
+            self._report_export([Path(path)])
 
     def _on_export_mzml(self) -> None:
         if not self._require_data():
             return
         path, _ = QFileDialog.getSaveFileName(self, "Export mzML", filter="mzML (*.mzml)")
         if path:
-            export_mzml(self.store, path)
+            written = export_mzml(self.store, path, self.export_data_choice())
+            self._report_export(written)
+
+    def export_data_choice(self) -> str:
+        return self.export_data_combo.currentData()
+
+    def _report_export(self, paths: list[Path]) -> None:
+        QMessageBox.information(
+            self, "Export complete", "Wrote:\n" + "\n".join(str(p) for p in paths)
+        )
 
     def _require_data(self) -> bool:
         if self.store is None or len(self.store) == 0:

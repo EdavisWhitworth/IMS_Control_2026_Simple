@@ -8,19 +8,34 @@ from pathlib import Path
 import numpy as np
 
 from ims_control.acquisition.experiment import ExperimentConfig
+from ims_control.io.variants import DEFAULT_EXPORT, split_variant, validate_export_data, variant_path
 from ims_control.models.data_store import DataStore
 
 
-def export_spectra_csv(store: DataStore, path: str | Path) -> None:
-    """One row per time point; one column per iteration, plus the shared time axis."""
+def export_spectra_csv(
+    store: DataStore, path: str | Path, data: str = DEFAULT_EXPORT
+) -> list[Path]:
+    """One row per time point; one column per iteration, plus the shared time axis.
+
+    `data` is "both" (default), "raw" or "processed". Each selected variant is written to its
+    own clearly named file, `<base>_raw.csv` / `<base>_processed.csv`. Returns the paths written.
+    """
     time_ms = store.time_axis_ms
-    with open(path, "w", newline="") as f:
-        writer = csv.writer(f)
-        header = ["time_ms"] + [f"iteration_{rec.index}" for rec in store.iterations]
-        writer.writerow(header)
-        for row_idx, t in enumerate(time_ms):
-            row = [t] + [rec.intensity[row_idx] for rec in store.iterations]
-            writer.writerow(row)
+    written: list[Path] = []
+    for variant in validate_export_data(data):
+        out_path = variant_path(path, variant)
+        with open(out_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            header = ["time_ms"] + [f"iteration_{rec.index}" for rec in store.iterations]
+            writer.writerow(header)
+            for row_idx, t in enumerate(time_ms):
+                row = [t] + [
+                    (rec.raw_intensity if variant == "raw" else rec.intensity)[row_idx]
+                    for rec in store.iterations
+                ]
+                writer.writerow(row)
+        written.append(out_path)
+    return written
 
 
 def export_peaks_csv(store: DataStore, path: str | Path) -> None:
@@ -44,16 +59,45 @@ def export_peaks_csv(store: DataStore, path: str | Path) -> None:
                 writer.writerow({"iteration": rec.index, **peak})
 
 
-def import_spectra_csv(path: str | Path) -> DataStore:
-    """Rebuild a DataStore from a spectra CSV. Instrument/ion metadata is not stored in
-    CSV, so the resulting ExperimentConfig uses default metadata values -- edit the
-    metadata fields in the GUI afterward to get correct K0/CCS on any recomputation."""
+def peaks_csv_path(path: str | Path) -> Path:
+    """Sibling peaks file `<base>_peaks.csv` for a spectra CSV (variant suffix ignored)."""
+    base, _ = split_variant(path)
+    return base.with_name(base.stem + "_peaks.csv")
+
+
+def _read_spectra_columns(path: Path) -> tuple[np.ndarray, list[str], np.ndarray]:
     with open(path, newline="") as f:
         rows = list(csv.reader(f))
     header, data_rows = rows[0], rows[1:]
-    iteration_labels = header[1:]
     time_ms = np.array([float(row[0]) for row in data_rows])
     columns = np.array([[float(v) for v in row[1:]] for row in data_rows])  # (num_points, n_iter)
+    return time_ms, header[1:], columns
+
+
+def import_spectra_csv(path: str | Path) -> DataStore:
+    """Rebuild a DataStore from a spectra CSV. Instrument/ion metadata is not stored in
+    CSV, so the resulting ExperimentConfig uses default metadata values -- edit the
+    metadata fields in the GUI afterward to get correct K0/CCS on any recomputation.
+
+    If `path` is a `_raw`/`_processed` file and its sibling variant exists, both are loaded,
+    so the pristine raw data is restored as `raw_intensity`. A lone processed file (or an
+    unlabelled legacy file) has no independent raw data, so raw is set equal to it."""
+    path = Path(path)
+    base, variant = split_variant(path)
+    time_ms, iteration_labels, columns = _read_spectra_columns(path)
+    raw_columns = None
+    if variant is not None:
+        sibling = variant_path(base, "processed" if variant == "raw" else "raw")
+        if sibling.exists():
+            _, sibling_labels, sibling_columns = _read_spectra_columns(sibling)
+            if sibling_labels != iteration_labels or sibling_columns.shape != columns.shape:
+                raise ValueError(f"{path.name} and {sibling.name} do not describe the same iterations")
+            if variant == "raw":
+                raw_columns, columns = columns, sibling_columns
+            else:
+                raw_columns = sibling_columns
+        elif variant == "raw":
+            raw_columns = columns  # raw-only: processing is re-derived from raw by the GUI
 
     num_points = len(time_ms)
     # DataStore.time_axis_ms = arange(num_points)/sample_rate*1000 with sample_rate =
@@ -65,7 +109,8 @@ def import_spectra_csv(path: str | Path) -> DataStore:
     store = DataStore(config)
     for col_idx, label in enumerate(iteration_labels):
         index = int(label.rsplit("_", 1)[-1])
-        store.add_iteration(index, columns[:, col_idx])
+        raw = None if raw_columns is None else raw_columns[:, col_idx]
+        store.add_iteration(index, columns[:, col_idx], raw)
     return store
 
 

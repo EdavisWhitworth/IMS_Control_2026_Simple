@@ -17,6 +17,7 @@ from xml.etree.ElementTree import Element, ElementTree, SubElement, parse
 import numpy as np
 
 from ims_control.acquisition.experiment import ExperimentConfig
+from ims_control.io.variants import DEFAULT_EXPORT, split_variant, validate_export_data, variant_path
 from ims_control.models.data_store import DataStore
 
 _NO_COMPRESSION = ("MS:1000576", "no compression")
@@ -46,7 +47,18 @@ def _binary_data_array(parent: Element, values, array_type: tuple[str, str]) -> 
     binary.text = encoded
 
 
-def export_mzml(store: DataStore, path: str | Path) -> None:
+def export_mzml(store: DataStore, path: str | Path, data: str = DEFAULT_EXPORT) -> list[Path]:
+    """Write mzML. `data` is "both" (default), "raw" or "processed"; each selected variant is
+    its own file, `<base>_raw.mzML` / `<base>_processed.mzML`. Returns the paths written."""
+    written: list[Path] = []
+    for variant in validate_export_data(data):
+        out_path = variant_path(path, variant)
+        _write_mzml(store, out_path, variant)
+        written.append(out_path)
+    return written
+
+
+def _write_mzml(store: DataStore, path: Path, variant: str) -> None:
     mzml = Element("mzML", {"xmlns": "http://psi.hupo.org/ms/mzml", "version": "1.1.0"})
 
     cv_list = SubElement(mzml, "cvList", {"count": "1"})
@@ -60,19 +72,21 @@ def export_mzml(store: DataStore, path: str | Path) -> None:
     file_desc = SubElement(mzml, "fileDescription")
     file_content = SubElement(file_desc, "fileContent")
     _cv_param(file_content, *_CENTROID)
+    SubElement(file_content, "userParam", {"name": "ims_data_variant", "value": variant})
 
     run = SubElement(mzml, "run", {"id": "ims_run"})
     spectrum_list = SubElement(run, "spectrumList", {"count": str(len(store.iterations))})
 
     time_ms = store.time_axis_ms
     for rec in store.iterations:
+        values = rec.raw_intensity if variant == "raw" else rec.intensity
         spectrum = SubElement(
             spectrum_list,
             "spectrum",
             {
                 "id": f"scan={rec.index}",
                 "index": str(rec.index),
-                "defaultArrayLength": str(len(rec.intensity)),
+                "defaultArrayLength": str(len(values)),
             },
         )
         _cv_param(spectrum, _MS_LEVEL[0], _MS_LEVEL[1], value="1")
@@ -82,7 +96,7 @@ def export_mzml(store: DataStore, path: str | Path) -> None:
             spectrum, "binaryDataArrayList", {"count": "2"}
         )
         _binary_data_array(binary_data_array_list, list(time_ms), _MZ_ARRAY)
-        _binary_data_array(binary_data_array_list, list(rec.intensity), _INTENSITY_ARRAY)
+        _binary_data_array(binary_data_array_list, list(values), _INTENSITY_ARRAY)
 
     ElementTree(mzml).write(path, xml_declaration=True, encoding="UTF-8")
 
@@ -106,11 +120,7 @@ def _decode_binary_data_array(bda: Element) -> tuple[str, list[float]]:
     return array_type, values
 
 
-def import_mzml(path: str | Path) -> DataStore:
-    """Rebuild a DataStore from an mzML file written by `export_mzml`. Instrument/ion
-    metadata is not stored in mzML, so the resulting ExperimentConfig uses default
-    metadata values -- edit the metadata fields in the GUI afterward to get correct
-    K0/CCS on any recomputation. No peak data is stored in mzML either."""
+def _read_mzml_spectra(path: Path) -> tuple[list[float], list[tuple[int, list[float]]]]:
     root = parse(path).getroot()
     spectra = [el for el in root.iter() if _local_tag(el) == "spectrum"]
 
@@ -134,6 +144,35 @@ def import_mzml(path: str | Path) -> DataStore:
 
     if time_ms is None:
         raise ValueError(f"No spectra found in mzML file: {path}")
+    return time_ms, intensities
+
+
+def import_mzml(path: str | Path) -> DataStore:
+    """Rebuild a DataStore from an mzML file written by `export_mzml`. Instrument/ion
+    metadata is not stored in mzML, so the resulting ExperimentConfig uses default
+    metadata values -- edit the metadata fields in the GUI afterward to get correct
+    K0/CCS on any recomputation. No peak data is stored in mzML either.
+
+    If `path` is a `_raw`/`_processed` file and its sibling variant exists, both are loaded
+    so the pristine raw data is restored as `raw_intensity`; otherwise raw is set equal to
+    the file's data (a lone raw file is treated as raw and re-processed by the GUI)."""
+    path = Path(path)
+    base, variant = split_variant(path)
+    time_ms, intensities = _read_mzml_spectra(path)
+    raw_by_index: dict[int, list[float]] = {}
+    if variant is not None:
+        sibling = variant_path(base, "processed" if variant == "raw" else "raw")
+        if sibling.exists():
+            _, sibling_intensities = _read_mzml_spectra(sibling)
+            if [i for i, _ in sibling_intensities] != [i for i, _ in intensities]:
+                raise ValueError(f"{path.name} and {sibling.name} do not describe the same iterations")
+            if variant == "raw":
+                raw_by_index = dict(intensities)
+                intensities = sibling_intensities
+            else:
+                raw_by_index = dict(sibling_intensities)
+        elif variant == "raw":
+            raw_by_index = dict(intensities)
 
     num_points = len(time_ms)
     # DataStore.time_axis_ms = arange(num_points)/sample_rate*1000 with sample_rate =
@@ -144,5 +183,6 @@ def import_mzml(path: str | Path) -> DataStore:
     config = ExperimentConfig(exp_length_ms=exp_length_ms, num_points=num_points)
     store = DataStore(config)
     for index, values in intensities:
-        store.add_iteration(index, np.array(values))
+        raw = raw_by_index.get(index)
+        store.add_iteration(index, np.array(values), None if raw is None else np.array(raw))
     return store

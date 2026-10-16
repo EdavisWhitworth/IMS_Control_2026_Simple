@@ -37,7 +37,12 @@ without an instrument connected.
 4. Use the iteration selector above the line plot to view the live iteration or any
    past iteration; the heatmap shows all iterations at once.
 5. The peak table updates for whichever iteration is selected.
-6. Use the Export buttons to save the run as CSV, HDF5, or mzML.
+6. Use the Export buttons to save the run as CSV, HDF5, or mzML. The drop-down beside them selects
+   **raw + processed (default)**, raw only, or processed only. Raw = as acquired, never modified.
+   HDF5 stores labelled `raw_intensity` and `intensity` datasets in one file; CSV and mzML write
+   separate `<name>_raw.*` and `<name>_processed.*` files. Importing either file of a pair restores
+   both. To verify original data is preserved through export/import, run
+   `$env:PYTHONPATH='.'; .venv\Scripts\python.exe scripts\verify_raw_roundtrip.py`.
 7. Use **Import...** to load a previously saved CSV, HDF5, or mzML file for review —
    this replaces the current in-memory run.
 
