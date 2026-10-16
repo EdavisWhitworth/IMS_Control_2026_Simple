@@ -1,4 +1,4 @@
-"""Tutorial: verify that raw data survives export and import unchanged.
+r"""Tutorial: verify that raw data survives export and import unchanged.
 
 Builds a synthetic run, applies a (deliberately aggressive) processing step so that
 `intensity` differs from `raw_intensity`, exports to HDF5/CSV/mzML with the default
