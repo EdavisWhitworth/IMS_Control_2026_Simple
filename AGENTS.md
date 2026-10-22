@@ -183,6 +183,11 @@ tests/                           pytest suite — uses SimulatedDAQBackend exclu
   (`SystemParameters.power_do_channel`) that both enables the supplies and drives the
   external indicator LED (`PowerSupplyBackend.set_enabled`) — do not split this into
   separate enable/LED channels or separate buttons.
+  Turning power off first writes 0 V to both AO setpoints, then deasserts the shared DO
+  line; kV edits while off do not write to the AO channels. Turning power on writes the
+  selected setpoints before asserting the shared DO line. If a shutdown write fails, the
+  UI reports the failure and does not indicate a confirmed off state; if the DAQ backend
+  is unavailable, it likewise treats the hardware state as unconfirmed.
   The Ionization control is a **bias on top of** the IMS cell output (e.g. IMS cell at
   10 kV + Ionization bias at 3 kV means the ionization supply's true output is 13 kV).
   Software computes this sum explicitly: `MainWindow` adds the IMS cell kV to the operator's
@@ -194,6 +199,11 @@ tests/                           pytest suite — uses SimulatedDAQBackend exclu
   `ControlPanel`, deliberately **independent** of the acquisition `simulator_checkbox` —
   do not reuse the acquisition simulator flag for power, or real hardware never gets
   the DO/AO writes even when the operator thinks they've enabled "real mode".
+  On application startup (after loading saved DAQ channels) and on window close, the selected
+  power backend is commanded to write 0 V to both AO outputs and deassert the shared DO line.
+  In simulated power mode these are simulator-only commands; physical outputs are driven only
+  when the real power backend is selected. Failures are reported and never presented as a
+  confirmed OFF state.
   `ControlPanel.set_power_indicator()` colors only the Power toggle button itself
   (green = off, red = on) — the window background is intentionally left neutral.
   `MainWindow` warns (not blocks) if the operator starts a run with power off.

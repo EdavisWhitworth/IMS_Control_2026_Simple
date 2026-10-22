@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QCloseEvent
 
 from ims_control.acquisition.controller import AcquisitionWorker
 from ims_control.acquisition.experiment import ExperimentConfig, SystemParameters
@@ -61,6 +62,7 @@ class MainWindow(QMainWindow):
         self._wire_signals()
         self._set_power_indicator(False)
         self._load_saved_defaults()
+        self._initialize_safe_power_state()
 
     def _build_layout(self) -> None:
         export_row = QHBoxLayout()
@@ -331,6 +333,49 @@ class MainWindow(QMainWindow):
         )
         QMessageBox.information(self, "Defaults saved", "Current settings saved as the new defaults.")
 
+    def _initialize_safe_power_state(self) -> None:
+        try:
+            backend = self._get_power_backend()
+        except Exception as exc:
+            self._set_power_indicator(True)
+            QMessageBox.critical(
+                self,
+                "Startup power-off failed",
+                "The power backend could not initialize, so output state is unconfirmed. "
+                "Verify the supplies are de-energized directly before use.\n\n"
+                f"{exc}",
+            )
+            return
+        if backend is None:
+            self._set_power_indicator(True)
+            return
+        errors = self._zero_power_outputs(backend)
+        self._set_power_indicator(bool(errors))
+        if errors:
+            QMessageBox.critical(
+                self,
+                "Startup power-off failed",
+                "The software could not confirm that all power outputs are off. "
+                "Verify the supplies are de-energized directly before use.\n\n"
+                + "\n".join(errors),
+            )
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        try:
+            backend = self._get_power_backend()
+            errors = self._zero_power_outputs(backend) if backend is not None else []
+        except Exception as exc:
+            errors = [f"Power backend: {exc}"]
+        if errors:
+            QMessageBox.critical(
+                self,
+                "Shutdown power-off failed",
+                "The software could not confirm that all power outputs are off. "
+                "Verify the supplies are de-energized directly.\n\n"
+                + "\n".join(errors),
+            )
+        event.accept()
+
     def _get_power_backend(self) -> PowerSupplyBackend | None:
         if self.power_backend is not None:
             return self.power_backend
@@ -342,7 +387,11 @@ class MainWindow(QMainWindow):
             try:
                 backend = NIPowerSupplyBackend()
             except RuntimeError as exc:
-                QMessageBox.critical(self, "Power supply DAQ unavailable", str(exc))
+                QMessageBox.critical(
+                    self,
+                    "Power supply DAQ unavailable",
+                    f"{exc}\n\nPower state cannot be confirmed. Verify the supplies are de-energized directly.",
+                )
                 return None
         backend.configure(
             device_name=self.system_parameters.device_name,
@@ -354,37 +403,80 @@ class MainWindow(QMainWindow):
         return backend
 
     def _on_power_kv_changed(self, ims_cell_kv: float, ionization_kv: float) -> None:
+        if not self.control_panel.is_power_enabled():
+            return
         backend = self._get_power_backend()
         if backend is None:
             return
-        backend.set_ims_cell_kv(
-            ims_cell_kv, self.system_parameters.ims_cell_max_kv, self.system_parameters.ims_cell_ao_full_scale_v
-        )
-        # Ionization is a bias on top of the IMS cell output, so the supply's true output
-        # setpoint is their sum (e.g. 5 kV cell + 3 kV bias = 8 kV written to the ionization AO).
-        backend.set_ionization_output_kv(
-            ims_cell_kv + ionization_kv,
-            self.system_parameters.ionization_max_kv,
-            self.system_parameters.ionization_ao_full_scale_v,
-        )
+        self._write_power_setpoints(backend, ims_cell_kv, ionization_kv)
 
     def _on_power_toggle_requested(self, enabled: bool) -> None:
         backend = self._get_power_backend()
         if backend is None:
-            self.control_panel.set_power_indicator(False)
+            self._set_power_indicator(True)
             return
-        backend.set_enabled(enabled)
         if enabled:
             ims_kv, ionization_kv = self.control_panel.power_kv_values()
-            backend.set_ims_cell_kv(
-                ims_kv, self.system_parameters.ims_cell_max_kv, self.system_parameters.ims_cell_ao_full_scale_v
-            )
-            backend.set_ionization_output_kv(
-                ims_kv + ionization_kv,
-                self.system_parameters.ionization_max_kv,
-                self.system_parameters.ionization_ao_full_scale_v,
-            )
+            try:
+                self._write_power_setpoints(backend, ims_kv, ionization_kv)
+                backend.set_enabled(True)
+            except Exception as exc:
+                shutdown_errors = self._zero_power_outputs(backend)
+                self._set_power_indicator(bool(shutdown_errors))
+                message = f"Failed to enable the power supplies: {exc}"
+                if shutdown_errors:
+                    message += "\n\nPower-off could not be confirmed:\n" + "\n".join(shutdown_errors)
+                QMessageBox.critical(self, "Power supply error", message)
+                return
+        else:
+            shutdown_errors = self._zero_power_outputs(backend)
+            self._set_power_indicator(bool(shutdown_errors))
+            if shutdown_errors:
+                QMessageBox.critical(
+                    self,
+                    "Power-off failed",
+                    "One or more power-off commands failed. The supplies may still be energized. "
+                    "Verify the hardware directly before approaching it.\n\n"
+                    + "\n".join(shutdown_errors),
+                )
+                return
         self._set_power_indicator(enabled)
+
+    def _write_power_setpoints(
+        self, backend: PowerSupplyBackend, ims_cell_kv: float, ionization_bias_kv: float
+    ) -> None:
+        backend.set_ims_cell_kv(
+            ims_cell_kv, self.system_parameters.ims_cell_max_kv, self.system_parameters.ims_cell_ao_full_scale_v
+        )
+        backend.set_ionization_output_kv(
+            ims_cell_kv + ionization_bias_kv,
+            self.system_parameters.ionization_max_kv,
+            self.system_parameters.ionization_ao_full_scale_v,
+        )
+
+    def _zero_power_outputs(self, backend: PowerSupplyBackend) -> list[str]:
+        params = self.system_parameters
+        errors: list[str] = []
+        for label, write in (
+            (
+                "IMS cell AO",
+                lambda: backend.set_ims_cell_kv(
+                    0.0, params.ims_cell_max_kv, params.ims_cell_ao_full_scale_v
+                ),
+            ),
+            (
+                "Ionization AO",
+                lambda: backend.set_ionization_output_kv(
+                    0.0, params.ionization_max_kv, params.ionization_ao_full_scale_v
+                ),
+            ),
+            ("Power enable", lambda: backend.set_enabled(False)),
+        ):
+            try:
+                write()
+            except Exception as exc:
+                errors.append(f"{label}: {exc}")
+        return errors
 
     def _on_power_mode_toggled(self, _checked: bool) -> None:
         if self.control_panel.is_power_enabled():
